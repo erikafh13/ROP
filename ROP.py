@@ -111,6 +111,22 @@ def map_city(nama_dept):
     elif nama_dept == 'H - BALI': return 'Bali'
     else: return 'Others'
 
+# --- [BARU] FUNGSI KONVERSI EXCEL ---
+@st.cache_data
+def convert_df_to_excel(df):
+    output = BytesIO()
+    # Jika kolom adalah multi-index, ratakan terlebih dahulu
+    if isinstance(df.columns, pd.MultiIndex):
+        df_to_save = df.copy()
+        df_to_save.columns = ['_'.join(map(str, col)).strip() for col in df_to_save.columns.values]
+    else:
+        df_to_save = df
+        
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df_to_save.to_excel(writer, index=True, sheet_name='Sheet1')
+    processed_data = output.getvalue()
+    return processed_data
+    
 # =====================================================================================
 #                                       HALAMAN INPUT DATA
 # =====================================================================================
@@ -248,6 +264,17 @@ elif page == "Hasil Analisa ROP":
         penjualan['Tgl Faktur'] = pd.to_datetime(penjualan['Tgl Faktur'], errors='coerce')
         penjualan.dropna(subset=['Tgl Faktur'], inplace=True)
     
+    # --- [BARU] Tampilkan preview data bersih dan tombol download ---
+    with st.expander("Lihat Data Penjualan Setelah Preprocessing"):
+        st.dataframe(penjualan)
+        excel_cleaned_penjualan = convert_df_to_excel(penjualan)
+        st.download_button(
+            label="📥 Unduh Data Penjualan Bersih (Excel)",
+            data=excel_cleaned_penjualan,
+            file_name="data_penjualan_bersih.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+    
     st.markdown("---")
     st.header("Pilih Rentang Tanggal untuk Analisis")
     
@@ -294,6 +321,9 @@ elif page == "Hasil Analisa ROP":
         
         result_df['Date'] = result_df['Date'].dt.strftime('%Y-%m-%d')
 
+        # --- [BARU] Inisialisasi variabel untuk menyimpan hasil pivot ---
+        pivot_outputs = {}
+
         st.header("Tabel ROP & SO per Kota")
         
         unique_cities = [str(city) for city in result_df['City'].dropna().unique()]
@@ -315,9 +345,11 @@ elif page == "Hasil Analisa ROP":
                     
                     pivot_city.columns = pivot_city.columns.swaplevel(0, 1)
                     pivot_city.sort_index(axis=1, level=0, inplace=True)
-
-                    # --- PERBAIKAN: Tampilkan sebagai HTML ---
-                    st.markdown(pivot_city.to_html(), unsafe_allow_html=True)
+                    
+                    # Simpan hasil pivot untuk diunduh
+                    pivot_outputs[f"ROP_{city.replace(' ', '_')}"] = pivot_city
+                    
+                    st.dataframe(pivot_city, use_container_width=True)
                 else:
                     st.write("Tidak ada data yang cocok dengan filter.")
 
@@ -339,8 +371,30 @@ elif page == "Hasil Analisa ROP":
 
                 pivot_all.columns = pivot_all.columns.swaplevel(0, 1)
                 pivot_all.sort_index(axis=1, level=0, inplace=True)
+
+                # Simpan hasil pivot untuk diunduh
+                pivot_outputs['ROP_Gabungan_Semua_Kota'] = pivot_all
                 
-                # --- PERBAIKAN: Tampilkan sebagai HTML ---
-                st.markdown(pivot_all.to_html(), unsafe_allow_html=True)
+                st.dataframe(pivot_all, use_container_width=True)
         else:
             st.warning("Tidak ada data untuk ditampilkan berdasarkan filter.")
+
+        # --- [BARU] Tombol Unduh Hasil Analisis ---
+        if pivot_outputs:
+            st.markdown("---")
+            st.header("💾 Unduh Hasil Analisis")
+
+            output = BytesIO()
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                for sheet_name, df_pivot in pivot_outputs.items():
+                    # Meratakan kolom multi-index sebelum menyimpan
+                    df_to_save = df_pivot.copy()
+                    df_to_save.columns = ['_'.join(map(str, col)).strip() for col in df_to_save.columns.values]
+                    df_to_save.to_excel(writer, sheet_name=sheet_name, index=True)
+            
+            st.download_button(
+                label="📥 Unduh Semua Hasil ROP & SO (Excel)",
+                data=output.getvalue(),
+                file_name=f"hasil_rop_so_{start_date}_to_{end_date}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
