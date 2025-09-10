@@ -128,7 +128,7 @@ def convert_df_to_excel(df):
     processed_data = output.getvalue()
     return processed_data
     
-# --- [PERBAIKAN] FUNGSI UTAMA DIPINDAH KE GLOBAL SCOPE ---
+# --- FUNGSI UTAMA PERHITUNGAN ROP (GLOBAL) ---
 @st.cache_data(ttl=3600)
 def calculate_rop_and_sellout(penjualan_df, produk_df, start_date, end_date, method):
     analysis_start_date = pd.to_datetime(start_date) - pd.DateOffset(days=90)
@@ -152,9 +152,11 @@ def calculate_rop_and_sellout(penjualan_df, produk_df, start_date, end_date, met
         group['Penjualan_Riil_21_Hari'] = group['SO'].iloc[::-1].rolling(window=21, min_periods=0).sum().iloc[::-1].shift(-21)
         return group
 
-    processed_data = daily_sales.groupby(['City', 'No. Barang'], group_keys=False, as_index=False).apply(process_group)
-    processed_data.reset_index(inplace=True)
-    processed_data.rename(columns={'level_0': 'Date'}, inplace=True)
+    processed_data = daily_sales.groupby(['City', 'No. Barang'], group_keys=False).apply(process_group).reset_index()
+    processed_data.rename(columns={'index': 'Date'}, inplace=True)
+    
+    # --- [PERBAIKAN] Pastikan tipe data 'Date' benar setelah operasi groupby ---
+    processed_data['Date'] = pd.to_datetime(processed_data['Date'])
     
     if method == "ABC Bertingkat":
         z_scores = {'A': 1.65, 'B': 1.0, 'C': 0.0, 'D': 0.0}
