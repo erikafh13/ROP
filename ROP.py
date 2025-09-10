@@ -128,7 +128,7 @@ def convert_df_to_excel(df):
     processed_data = output.getvalue()
     return processed_data
     
-# --- FUNGSI UTAMA PERHITUNGAN ROP (GLOBAL) ---
+# --- [PERBAIKAN] FUNGSI UTAMA DIPINDAH KE GLOBAL SCOPE ---
 @st.cache_data(ttl=3600)
 def calculate_rop_and_sellout(penjualan_df, produk_df, start_date, end_date, method):
     analysis_start_date = pd.to_datetime(start_date) - pd.DateOffset(days=90)
@@ -171,7 +171,7 @@ def calculate_rop_and_sellout(penjualan_df, produk_df, start_date, end_date, met
             df_city['Kategori ABC'] = 'D'
         return df_city[['City', 'No. Barang', 'Kategori ABC']]
 
-    abc_classification = avg_sales.groupby('City').apply(classify_abc).reset_index(drop=True)
+    abc_classification = avg_sales.groupby('City', group_keys=False).apply(classify_abc).reset_index(drop=True)
     final_df = pd.merge(processed_data, abc_classification, on=['City', 'No. Barang'], how='left')
 
     final_df['Z_Score'] = final_df['Kategori ABC'].map(z_scores).fillna(0).astype(float)
@@ -208,7 +208,6 @@ if page == "Input Data":
         if penjualan_files_list:
             with st.spinner("Menggabungkan semua file penjualan..."):
                 df_penjualan = pd.concat([download_and_read(f['id'], f['name']) for f in penjualan_files_list], ignore_index=True)
-                # --- PERBAIKAN: Konversi tipe data langsung setelah memuat ---
                 if 'No. Barang' in df_penjualan.columns:
                     df_penjualan['No. Barang'] = df_penjualan['No. Barang'].astype(str)
                 st.session_state.df_penjualan = df_penjualan
@@ -227,7 +226,6 @@ if page == "Input Data":
             num_months = len(df_penjualan_display['Tgl Faktur'].dt.to_period('M').unique())
             st.info(f"📅 **Rentang Data:** Dari **{min_date.strftime('%d %B %Y')}** hingga **{max_date.strftime('%d %B %Y')}** ({num_months} bulan data).")
         
-        # --- PERBAIKAN: Pastikan tipe data benar sebelum ditampilkan ---
         if 'No. Barang' in df_penjualan_display.columns:
             df_penjualan_display['No. Barang'] = df_penjualan_display['No. Barang'].astype(str)
         st.dataframe(df_penjualan_display)
@@ -243,7 +241,6 @@ if page == "Input Data":
     if selected_produk_file:
         with st.spinner(f"Memuat file {selected_produk_file['name']}..."):
             produk_df = read_produk_file(selected_produk_file['id'])
-            # --- PERBAIKAN: Konversi tipe data langsung setelah memuat ---
             if 'No. Barang' in produk_df.columns:
                 produk_df['No. Barang'] = produk_df['No. Barang'].astype(str)
             st.session_state.produk_ref = produk_df
@@ -372,7 +369,7 @@ elif page == "Hasil Analisa ROP":
                     st.markdown(pivot_city.to_html(), unsafe_allow_html=True)
                 else:
                     st.write("Tidak ada data yang cocok dengan filter.")
-
+        
         if pivot_outputs:
             st.markdown("---")
             st.header("💾 Unduh Hasil Analisis")
@@ -486,9 +483,9 @@ elif page == "Analisis Error Metode ROP":
             st.dataframe(mae_per_city.style.highlight_min(color='lightgreen', axis=1))
 
         with st.expander("Lihat Detail Data Analisis"):
-            # --- PERBAIKAN: Pastikan tipe data benar sebelum ditampilkan ---
             result_df_display = result_df.copy()
-            result_df_display['No. Barang'] = result_df_display['No. Barang'].astype(str)
+            if 'No. Barang' in result_df_display.columns:
+                result_df_display['No. Barang'] = result_df_display['No. Barang'].astype(str)
             st.dataframe(result_df_display)
             
             excel_data = convert_df_to_excel(result_df)
