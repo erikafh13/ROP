@@ -169,10 +169,6 @@ elif page == "Hasil Analisa ROP":
 
     @st.cache_data(ttl=3600)
     def calculate_rop_vectorized(penjualan_df, produk_df, start_date, end_date):
-        """
-        Versi kalkulasi ROP yang lebih cepat dan efisien memori.
-        Metode ini memproses setiap item secara terpisah untuk menghindari pembuatan dataframe raksasa.
-        """
         # 1. Siapkan data penjualan harian dan rentang tanggal yang diperlukan
         analysis_start_date = pd.to_datetime(start_date) - pd.DateOffset(days=90)
         date_range_full = pd.date_range(start=analysis_start_date, end=end_date, freq='D')
@@ -188,7 +184,7 @@ elif page == "Hasil Analisa ROP":
             
             # Kalkulasi rolling pada data series yang sudah lengkap
             sales_30d = group['Kuantitas'].rolling(window=30, min_periods=1).sum()
-            sales_60d = group['Kuantitas'].rolling(window=60, min_periods=1).sum()
+            sales_60d = group['Kuantuas'].rolling(window=60, min_periods=1).sum()
             sales_90d = group['Kuantitas'].rolling(window=90, min_periods=1).sum()
             std_dev_90d = group['Kuantitas'].rolling(window=90, min_periods=1).std().fillna(0)
             
@@ -212,19 +208,23 @@ elif page == "Hasil Analisa ROP":
                 df_city['Kategori ABC'] = pd.cut(df_city['Cumulative_Perc'], bins=[-1, 70, 90, 101], labels=['A', 'B', 'C'], right=True)
             else:
                 df_city['Kategori ABC'] = 'D'
-            return df_city[['No. Barang', 'Kategori ABC']]
+            # --- PERBAIKAN KUNCI ---
+            # Pastikan kolom 'City' dikembalikan agar bisa digabung (merge)
+            return df_city[['City', 'No. Barang', 'Kategori ABC']]
 
-        abc_classification = avg_sales.groupby('City', group_keys=False).apply(classify_abc)
+        abc_classification = avg_sales.groupby('City').apply(classify_abc).reset_index(drop=True)
+        
+        # 5. Gabungkan klasifikasi ABC ke data utama
         final_df = pd.merge(processed_data, abc_classification, on=['City', 'No. Barang'], how='left')
 
-        # 5. Hitung metrik final ROP
+        # 6. Hitung metrik final ROP
         z_scores = {'A': 1.65, 'B': 1.0, 'C': 0.0, 'D': 0.0}
         final_df['Z_Score'] = final_df['Kategori ABC'].map(z_scores).fillna(0)
         final_df['Safety Stock'] = final_df['Z_Score'] * final_df['std_dev_90d'] * math.sqrt(0.7)
         final_df['Min Stock'] = final_df['WMA'] * (21/30)
         final_df['ROP'] = final_df['Min Stock'] + final_df['Safety Stock']
 
-        # 6. Gabungkan dengan info produk dan filter tanggal sesuai permintaan
+        # 7. Gabungkan dengan info produk dan filter tanggal sesuai permintaan
         final_df = pd.merge(final_df, produk_df, on='No. Barang', how='left')
         final_df = final_df[final_df['Date'].dt.date >= start_date].copy()
         final_df['ROP'] = final_df['ROP'].round().astype(int)
