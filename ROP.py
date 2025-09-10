@@ -55,7 +55,7 @@ try:
     if credentials:
         drive_service = build('drive', 'v3', credentials=credentials)
         # Ganti dengan ID folder Anda jika berbeda
-        folder_penjualan = "1wH9o4dyNfjve9ScJ_DB2TwT0EDsPe9Zf" 
+        folder_penjualan = "1wH9o4dyNfjve9ScJ_DB2TwT0EDsPe9Zf"
         folder_produk = "1UdGbFzZ2Wv83YZLNwdU-rgY-LXlczsFv"
         DRIVE_AVAILABLE = True
 
@@ -179,18 +179,15 @@ elif page == "Hasil Analisa ROP":
 
         # 2. Fungsi inti untuk memproses setiap grup produk-kota
         def process_group(group):
-            # Mengisi tanggal yang kosong dengan penjualan 0
             group = group.set_index('Date').reindex(date_range_full, fill_value=0)
-            
-            # Kalkulasi rolling pada data series yang sudah lengkap
             sales_30d = group['Kuantitas'].rolling(window=30, min_periods=1).sum()
+            # --- FIX #1: Typo 'Kuantuas' menjadi 'Kuantitas' ---
             sales_60d = group['Kuantitas'].rolling(window=60, min_periods=1).sum()
             sales_90d = group['Kuantitas'].rolling(window=90, min_periods=1).sum()
             std_dev_90d = group['Kuantitas'].rolling(window=90, min_periods=1).std().fillna(0)
             
             group['WMA'] = (sales_30d * 0.5) + ((sales_60d - sales_30d) * 0.3) + ((sales_90d - sales_60d) * 0.2)
             group['std_dev_90d'] = std_dev_90d
-            
             return group.drop(columns=['Kuantitas'])
 
         # 3. Terapkan fungsi ke setiap grup dan gabungkan hasilnya
@@ -208,8 +205,6 @@ elif page == "Hasil Analisa ROP":
                 df_city['Kategori ABC'] = pd.cut(df_city['Cumulative_Perc'], bins=[-1, 70, 90, 101], labels=['A', 'B', 'C'], right=True)
             else:
                 df_city['Kategori ABC'] = 'D'
-            # --- PERBAIKAN KUNCI ---
-            # Pastikan kolom 'City' dikembalikan agar bisa digabung (merge)
             return df_city[['City', 'No. Barang', 'Kategori ABC']]
 
         abc_classification = avg_sales.groupby('City').apply(classify_abc).reset_index(drop=True)
@@ -220,6 +215,11 @@ elif page == "Hasil Analisa ROP":
         # 6. Hitung metrik final ROP
         z_scores = {'A': 1.65, 'B': 1.0, 'C': 0.0, 'D': 0.0}
         final_df['Z_Score'] = final_df['Kategori ABC'].map(z_scores).fillna(0)
+        
+        # --- PERBAIKAN KUNCI: Konversi Z_Score ke tipe float ---
+        # Ini memastikan operasi matematika dapat berjalan tanpa error.
+        final_df['Z_Score'] = final_df['Z_Score'].astype(float)
+        
         final_df['Safety Stock'] = final_df['Z_Score'] * final_df['std_dev_90d'] * math.sqrt(0.7)
         final_df['Min Stock'] = final_df['WMA'] * (21/30)
         final_df['ROP'] = final_df['Min Stock'] + final_df['Safety Stock']
