@@ -128,6 +128,67 @@ def convert_df_to_excel(df):
     processed_data = output.getvalue()
     return processed_data
     
+# --- FUNGSI UTAMA PERHITUNGAN ROP (GLOBAL) ---
+@st.cache_data(ttl=3600)
+def calculate_rop_and_sellout(penjualan_df, produk_df, start_date, end_date, method):
+    analysis_start_date = pd.to_datetime(start_date) - pd.DateOffset(days=90)
+    date_range_full = pd.date_range(start=analysis_start_date, end=end_date, freq='D')
+    
+    daily_sales = penjualan_df.groupby(['Tgl Faktur', 'City', 'No. Barang'])['Kuantitas'].sum().reset_index()
+    daily_sales.rename(columns={'Tgl Faktur': 'Date'}, inplace=True)
+    daily_sales['Date'] = pd.to_datetime(daily_sales['Date'])
+
+    def process_group(group):
+        group = group.set_index('Date').reindex(date_range_full, fill_value=0)
+        group.rename(columns={'Kuantitas': 'SO'}, inplace=True)
+        sales_30d = group['SO'].rolling(window=30, min_periods=1).sum()
+        sales_60d = group['SO'].rolling(window=60, min_periods=1).sum()
+        sales_90d = group['SO'].rolling(window=90, min_periods=1).sum()
+        std_dev_90d = group['SO'].rolling(window=90, min_periods=1).std().fillna(0)
+        
+        group['WMA'] = (sales_30d * 0.5) + ((sales_60d - sales_30d) * 0.3) + ((sales_90d - sales_60d) * 0.2)
+        group['std_dev_90d'] = std_dev_90d
+        return group
+
+    processed_data = daily_sales.groupby(['City', 'No. Barang'], group_keys=False).apply(process_group).reset_index()
+    processed_data.rename(columns={'index': 'Date'}, inplace=True)
+    
+    if method == "ABC Bertingkat":
+        z_scores = {'A': 1.65, 'B': 1.0, 'C': 0.0, 'D': 0.0}
+    elif method == "Uniform":
+        z_scores = {'A': 1.0, 'B': 1.0, 'C': 1.0, 'D': 1.0}
+    else: # ROP = Min Stock
+        z_scores = {'A': 0.0, 'B': 0.0, 'C': 0.0, 'D': 0.0}
+
+    avg_sales = processed_data.groupby(['City', 'No. Barang'])['WMA'].mean().reset_index()
+    def classify_abc(df_city):
+        df_city = df_city.sort_values(by='WMA', ascending=False)
+        total_sales = df_city['WMA'].sum()
+        if total_sales > 0:
+            df_city['Cumulative_Perc'] = 100 * df_city['WMA'].cumsum() / total_sales
+            df_city['Kategori ABC'] = pd.cut(df_city['Cumulative_Perc'], bins=[-1, 70, 90, 101], labels=['A', 'B', 'C'], right=True)
+        else:
+            df_city['Kategori ABC'] = 'D'
+        return df_city[['City', 'No. Barang', 'Kategori ABC']]
+
+    abc_classification = avg_sales.groupby('City').apply(classify_abc).reset_index(drop=True)
+    final_df = pd.merge(processed_data, abc_classification, on=['City', 'No. Barang'], how='left')
+
+    final_df['Z_Score'] = final_df['Kategori ABC'].map(z_scores).fillna(0).astype(float)
+    
+    final_df['Safety Stock'] = final_df['Z_Score'] * final_df['std_dev_90d'] * math.sqrt(0.7)
+    final_df['Min Stock'] = final_df['WMA'] * (21/30)
+    final_df['ROP'] = final_df['Min Stock'] + final_df['Safety Stock']
+
+    final_df = pd.merge(final_df, produk_df, on='No. Barang', how='left')
+    final_df = final_df[final_df['Date'].dt.date >= start_date].copy()
+    
+    final_df['ROP'] = final_df['ROP'].round().astype(int)
+    final_df['SO'] = final_df['SO'].astype(int)
+    
+    return_cols = ['Date', 'City', 'No. Barang', 'Kategori Barang', 'BRAND Barang', 'Nama Barang', 'ROP', 'SO']
+    return final_df[return_cols]
+
 # =====================================================================================
 #                                       HALAMAN INPUT DATA
 # =====================================================================================
@@ -191,67 +252,6 @@ elif page == "Hasil Analisa ROP":
         ("ABC Bertingkat", "Uniform", "ROP = Min Stock")
     )
 
-    @st.cache_data(ttl=3600)
-    def calculate_rop_and_sellout(penjualan_df, produk_df, start_date, end_date, method):
-        analysis_start_date = pd.to_datetime(start_date) - pd.DateOffset(days=90)
-        date_range_full = pd.date_range(start=analysis_start_date, end=end_date, freq='D')
-        
-        daily_sales = penjualan_df.groupby(['Tgl Faktur', 'City', 'No. Barang'])['Kuantitas'].sum().reset_index()
-        daily_sales.rename(columns={'Tgl Faktur': 'Date'}, inplace=True)
-        daily_sales['Date'] = pd.to_datetime(daily_sales['Date'])
-
-        def process_group(group):
-            group = group.set_index('Date').reindex(date_range_full, fill_value=0)
-            group.rename(columns={'Kuantitas': 'SO'}, inplace=True)
-            sales_30d = group['SO'].rolling(window=30, min_periods=1).sum()
-            sales_60d = group['SO'].rolling(window=60, min_periods=1).sum()
-            sales_90d = group['SO'].rolling(window=90, min_periods=1).sum()
-            std_dev_90d = group['SO'].rolling(window=90, min_periods=1).std().fillna(0)
-            
-            group['WMA'] = (sales_30d * 0.5) + ((sales_60d - sales_30d) * 0.3) + ((sales_90d - sales_60d) * 0.2)
-            group['std_dev_90d'] = std_dev_90d
-            return group
-
-        processed_data = daily_sales.groupby(['City', 'No. Barang'], group_keys=False).apply(process_group).reset_index()
-        processed_data.rename(columns={'index': 'Date'}, inplace=True)
-        
-        if method == "ABC Bertingkat":
-            z_scores = {'A': 1.65, 'B': 1.0, 'C': 0.0, 'D': 0.0}
-        elif method == "Uniform":
-            z_scores = {'A': 1.0, 'B': 1.0, 'C': 1.0, 'D': 1.0}
-        else: # ROP = Min Stock
-            z_scores = {'A': 0.0, 'B': 0.0, 'C': 0.0, 'D': 0.0}
-
-        avg_sales = processed_data.groupby(['City', 'No. Barang'])['WMA'].mean().reset_index()
-        def classify_abc(df_city):
-            df_city = df_city.sort_values(by='WMA', ascending=False)
-            total_sales = df_city['WMA'].sum()
-            if total_sales > 0:
-                df_city['Cumulative_Perc'] = 100 * df_city['WMA'].cumsum() / total_sales
-                df_city['Kategori ABC'] = pd.cut(df_city['Cumulative_Perc'], bins=[-1, 70, 90, 101], labels=['A', 'B', 'C'], right=True)
-            else:
-                df_city['Kategori ABC'] = 'D'
-            return df_city[['City', 'No. Barang', 'Kategori ABC']]
-
-        abc_classification = avg_sales.groupby('City').apply(classify_abc).reset_index(drop=True)
-        final_df = pd.merge(processed_data, abc_classification, on=['City', 'No. Barang'], how='left')
-
-        final_df['Z_Score'] = final_df['Kategori ABC'].map(z_scores).fillna(0).astype(float)
-        
-        final_df['Safety Stock'] = final_df['Z_Score'] * final_df['std_dev_90d'] * math.sqrt(0.7)
-        final_df['Min Stock'] = final_df['WMA'] * (21/30)
-        final_df['ROP'] = final_df['Min Stock'] + final_df['Safety Stock']
-
-        final_df = pd.merge(final_df, produk_df, on='No. Barang', how='left')
-        final_df = final_df[final_df['Date'].dt.date >= start_date].copy()
-        
-        final_df['ROP'] = final_df['ROP'].round().astype(int)
-        final_df['SO'] = final_df['SO'].astype(int)
-        
-        return_cols = ['Date', 'City', 'No. Barang', 'Kategori Barang', 'BRAND Barang', 'Nama Barang', 'ROP', 'SO']
-        return final_df[return_cols]
-
-    # --- UI & Logika Halaman ---
     if st.session_state.df_penjualan.empty or st.session_state.produk_ref.empty:
         st.warning("⚠️ Harap muat file **Penjualan** dan **Produk Referensi** di halaman **'Input Data'**.")
         st.stop()
@@ -358,7 +358,7 @@ elif page == "Hasil Analisa ROP":
                     
                     pivot_outputs[f"ROP_{city.replace(' ', '_')}"] = pivot_city
                     
-                    # --- PERBAIKAN: Meratakan kolom untuk st.dataframe ---
+                    # Meratakan kolom untuk st.dataframe
                     display_df = pivot_city.copy()
                     display_df.columns = ['_'.join(col).strip() for col in display_df.columns.values]
                     
@@ -383,7 +383,7 @@ elif page == "Hasil Analisa ROP":
             )
 
 # =====================================================================================
-#                           [BARU] HALAMAN ANALISIS ERROR METODE ROP
+#                           HALAMAN ANALISIS ERROR METODE ROP
 # =====================================================================================
 elif page == "Analisis Error Metode ROP":
     st.title("🎯 Analisis Error Metode ROP")
