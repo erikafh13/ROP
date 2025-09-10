@@ -102,7 +102,6 @@ def map_nama_dept(row):
     return mapping.get(dept, 'X')
 
 def map_city(nama_dept):
-    # --- PERBAIKAN SYNTAX ERROR DI SINI ---
     if nama_dept in ['A - ITC', 'A - RETAIL', 'C - PUSAT', 'G - PROJECT']: 
         return 'Surabaya'
     elif nama_dept == 'B - JKT': return 'Jakarta'
@@ -316,7 +315,6 @@ elif page == "Hasil Analisa ROP":
                     
                     pivot_city.columns = pivot_city.columns.swaplevel(0, 1)
                     pivot_city.sort_index(axis=1, level=0, inplace=True)
-
                     st.dataframe(pivot_city, use_container_width=True)
                 else:
                     st.write("Tidak ada data yang cocok dengan filter.")
@@ -340,6 +338,12 @@ elif page == "Hasil Analisa ROP":
                 pivot_all.columns = pivot_all.columns.swaplevel(0, 1)
                 pivot_all.sort_index(axis=1, level=0, inplace=True)
                 
-                st.dataframe(pivot_all, use_container_width=True)
+                # --- PERBAIKAN KUNCI: Meratakan kolom dan RESET INDEX ---
+                # Ini adalah solusi untuk error 'ArrowInvalid'
+                pivot_all_display = pivot_all.copy()
+                pivot_all_display.columns = ['_'.join(col).strip() for col in pivot_all_display.columns.values]
+                pivot_all_display.reset_index(inplace=True)
+
+                st.dataframe(pivot_all_display, use_container_width=True)
         else:
             st.warning("Tidak ada data untuk ditampilkan berdasarkan filter.")
