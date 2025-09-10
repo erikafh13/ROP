@@ -155,7 +155,6 @@ def calculate_rop_and_sellout(penjualan_df, produk_df, start_date, end_date, met
     processed_data = daily_sales.groupby(['City', 'No. Barang'], group_keys=False).apply(process_group).reset_index()
     processed_data.rename(columns={'index': 'Date'}, inplace=True)
     
-    # --- [PERBAIKAN] Pastikan tipe data 'Date' benar setelah operasi groupby ---
     processed_data['Date'] = pd.to_datetime(processed_data['Date'])
     
     if method == "ABC Bertingkat":
@@ -435,15 +434,15 @@ elif page == "Analisis Error Metode ROP":
                 progress_bar = st.progress(0, text="Memulai...")
 
                 # Hitung ROP untuk setiap metode
-                rop_abc = calculate_rop_and_sellout(penjualan, produk_ref, start_date, end_date, "ABC Bertingkat").rename(columns={'ROP': 'ROP_ABC'})
+                all_methods_data = calculate_rop_and_sellout(penjualan, produk_ref, start_date, end_date, "ABC Bertingkat").rename(columns={'ROP': 'ROP_ABC'})
                 progress_bar.progress(33, text="Metode ABC Bertingkat selesai...")
                 
                 rop_uniform_df = calculate_rop_and_sellout(penjualan, produk_ref, start_date, end_date, "Uniform")[['Date', 'City', 'No. Barang', 'ROP']].rename(columns={'ROP': 'ROP_Uniform'})
-                merged_rop = pd.merge(rop_abc, rop_uniform_df, on=['Date', 'City', 'No. Barang'])
+                all_methods_data = pd.merge(all_methods_data, rop_uniform_df, on=['Date', 'City', 'No. Barang'])
                 progress_bar.progress(66, text="Metode Uniform selesai...")
 
                 rop_min_df = calculate_rop_and_sellout(penjualan, produk_ref, start_date, end_date, "ROP = Min Stock")[['Date', 'City', 'No. Barang', 'ROP']].rename(columns={'ROP': 'ROP_Min_Stock'})
-                final_analysis_df = pd.merge(merged_rop, rop_min_df, on=['Date', 'City', 'No. Barang'])
+                final_analysis_df = pd.merge(all_methods_data, rop_min_df, on=['Date', 'City', 'No. Barang'])
                 progress_bar.progress(90, text="Metode Min Stock selesai...")
 
                 final_analysis_df.dropna(subset=['Penjualan_Riil_21_Hari'], inplace=True)
