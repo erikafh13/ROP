@@ -184,7 +184,7 @@ elif page == "Hasil Analisa ROP":
             
             # Kalkulasi rolling pada data series yang sudah lengkap
             sales_30d = group['Kuantitas'].rolling(window=30, min_periods=1).sum()
-            sales_60d = group['Kuantuas'].rolling(window=60, min_periods=1).sum()
+            sales_60d = group['Kuantitas'].rolling(window=60, min_periods=1).sum()
             sales_90d = group['Kuantitas'].rolling(window=90, min_periods=1).sum()
             std_dev_90d = group['Kuantitas'].rolling(window=90, min_periods=1).std().fillna(0)
             
