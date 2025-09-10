@@ -312,12 +312,12 @@ elif page == "Hasil Analisa ROP":
                         values=['ROP', 'SO']
                     ).fillna(0).astype(int)
                     
-                    # --- PERUBAHAN FORMAT TAMPILAN ---
-                    # 1. Tukar level kolom (Date menjadi level atas)
                     pivot_city.columns = pivot_city.columns.swaplevel(0, 1)
-                    # 2. Urutkan berdasarkan level atas (Date), lalu level bawah (ROP/SO)
                     pivot_city.sort_index(axis=1, level=0, inplace=True)
-
+                    
+                    # --- PERBAIKAN KUNCI: Meratakan kolom untuk Streamlit ---
+                    pivot_city.columns = [f'{col[0]} {col[1]}' for col in pivot_city.columns]
+                    
                     st.dataframe(pivot_city, use_container_width=True)
                 else:
                     st.write("Tidak ada data yang cocok dengan filter.")
@@ -338,11 +338,11 @@ elif page == "Hasil Analisa ROP":
                     aggfunc='sum'
                 ).fillna(0).astype(int)
 
-                # --- PERUBAHAN FORMAT TAMPILAN ---
-                # 1. Tukar level kolom (Date menjadi level atas)
                 pivot_all.columns = pivot_all.columns.swaplevel(0, 1)
-                # 2. Urutkan berdasarkan level atas (Date), lalu level bawah (ROP/SO)
                 pivot_all.sort_index(axis=1, level=0, inplace=True)
+                
+                # --- PERBAIKAN KUNCI: Meratakan kolom untuk Streamlit ---
+                pivot_all.columns = [f'{col[0]} {col[1]}' for col in pivot_all.columns]
                 
                 st.dataframe(pivot_all, use_container_width=True)
         else:
