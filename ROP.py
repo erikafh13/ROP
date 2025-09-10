@@ -128,11 +128,10 @@ def convert_df_to_excel(df):
     processed_data = output.getvalue()
     return processed_data
     
-# --- FUNGSI UTAMA PERHITUNGAN ROP (GLOBAL) ---
+# --- [PERBAIKAN] FUNGSI UTAMA DIPINDAH KE GLOBAL SCOPE ---
 @st.cache_data(ttl=3600)
 def calculate_rop_and_sellout(penjualan_df, produk_df, start_date, end_date, method):
     analysis_start_date = pd.to_datetime(start_date) - pd.DateOffset(days=90)
-    # Perpanjang rentang tanggal untuk memastikan kalkulasi rolling 21 hari ke depan tersedia
     extended_end_date = pd.to_datetime(end_date) + pd.DateOffset(days=21)
     date_range_full = pd.date_range(start=analysis_start_date, end=extended_end_date, freq='D')
     
@@ -150,15 +149,12 @@ def calculate_rop_and_sellout(penjualan_df, produk_df, start_date, end_date, met
         
         group['WMA'] = (sales_30d * 0.5) + ((sales_60d - sales_30d) * 0.3) + ((sales_90d - sales_60d) * 0.2)
         group['std_dev_90d'] = std_dev_90d
-        
-        # --- [PERBAIKAN] Kalkulasi penjualan 21 hari ke depan ---
-        # Menggunakan metode rolling pada data yang dibalik untuk melihat ke depan
         group['Penjualan_Riil_21_Hari'] = group['SO'].iloc[::-1].rolling(window=21, min_periods=0).sum().iloc[::-1].shift(-21)
-
         return group
 
-    processed_data = daily_sales.groupby(['City', 'No. Barang'], group_keys=False).apply(process_group).reset_index()
-    processed_data.rename(columns={'index': 'Date'}, inplace=True)
+    processed_data = daily_sales.groupby(['City', 'No. Barang'], group_keys=False, as_index=False).apply(process_group)
+    processed_data.reset_index(inplace=True)
+    processed_data.rename(columns={'level_0': 'Date'}, inplace=True)
     
     if method == "ABC Bertingkat":
         z_scores = {'A': 1.65, 'B': 1.0, 'C': 0.0, 'D': 0.0}
@@ -188,7 +184,7 @@ def calculate_rop_and_sellout(penjualan_df, produk_df, start_date, end_date, met
     final_df['ROP'] = final_df['Min Stock'] + final_df['Safety Stock']
 
     final_df = pd.merge(final_df, produk_df, on='No. Barang', how='left')
-    final_df = final_df[(final_df['Date'].dt.date >= start_date) & (final_df['Date'].dt.date <= end_date)].copy()
+    final_df = final_df[(final_df['Date'].dt.date >= pd.to_datetime(start_date).date()) & (final_df['Date'].dt.date <= pd.to_datetime(end_date).date())].copy()
     
     final_df['ROP'] = final_df['ROP'].round().astype(int)
     final_df['SO'] = final_df['SO'].astype(int)
@@ -202,7 +198,58 @@ def calculate_rop_and_sellout(penjualan_df, produk_df, start_date, end_date, met
 
 if page == "Input Data":
     st.title("📥 Input Data")
-    # ... (Kode tidak berubah) ...
+    st.markdown("Muat atau muat ulang data yang diperlukan dari Google Drive.")
+
+    if not DRIVE_AVAILABLE:
+        st.warning("Tidak dapat melanjutkan karena koneksi ke Google Drive gagal.")
+        st.stop()
+
+    st.header("1. Data Penjualan")
+    with st.spinner("Mencari file penjualan di Google Drive..."):
+        penjualan_files_list = list_files_in_folder(drive_service, folder_penjualan)
+    if st.button("Muat / Muat Ulang Data Penjualan"):
+        if penjualan_files_list:
+            with st.spinner("Menggabungkan semua file penjualan..."):
+                df_penjualan = pd.concat([download_and_read(f['id'], f['name']) for f in penjualan_files_list], ignore_index=True)
+                if 'No. Barang' in df_penjualan.columns:
+                    df_penjualan['No. Barang'] = df_penjualan['No. Barang'].astype(str)
+                st.session_state.df_penjualan = df_penjualan
+                st.success("Data penjualan berhasil dimuat ulang.")
+        else:
+            st.warning("⚠️ Tidak ada file penjualan ditemukan di folder Google Drive.")
+
+    if not st.session_state.df_penjualan.empty:
+        df_penjualan_display = st.session_state.df_penjualan.copy()
+        st.success(f"✅ Data penjualan telah dimuat ({len(df_penjualan_display)} baris).")
+        df_penjualan_display['Tgl Faktur'] = pd.to_datetime(df_penjualan_display['Tgl Faktur'], errors='coerce')
+        min_date = df_penjualan_display['Tgl Faktur'].min()
+        max_date = df_penjualan_display['Tgl Faktur'].max()
+        
+        if pd.notna(min_date) and pd.notna(max_date):
+            num_months = len(df_penjualan_display['Tgl Faktur'].dt.to_period('M').unique())
+            st.info(f"📅 **Rentang Data:** Dari **{min_date.strftime('%d %B %Y')}** hingga **{max_date.strftime('%d %B %Y')}** ({num_months} bulan data).")
+        
+        if 'No. Barang' in df_penjualan_display.columns:
+            df_penjualan_display['No. Barang'] = df_penjualan_display['No. Barang'].astype(str)
+        st.dataframe(df_penjualan_display)
+
+    st.header("2. Produk Referensi")
+    with st.spinner("Mencari file produk di Google Drive..."):
+        produk_files_list = list_files_in_folder(drive_service, folder_produk)
+    selected_produk_file = st.selectbox(
+        "Pilih file Produk dari Google Drive:",
+        options=[None] + produk_files_list,
+        format_func=lambda x: x['name'] if x else "Pilih file"
+    )
+    if selected_produk_file:
+        with st.spinner(f"Memuat file {selected_produk_file['name']}..."):
+            produk_df = read_produk_file(selected_produk_file['id'])
+            if 'No. Barang' in produk_df.columns:
+                produk_df['No. Barang'] = produk_df['No. Barang'].astype(str)
+            st.session_state.produk_ref = produk_df
+            st.success(f"File produk referensi '{selected_produk_file['name']}' berhasil dimuat.")
+    if not st.session_state.produk_ref.empty:
+        st.dataframe(st.session_state.produk_ref.head())
 
 # =====================================================================================
 #                                    HALAMAN HASIL ANALISA ROP
@@ -280,17 +327,67 @@ elif page == "Hasil Analisa ROP":
         result_df = st.session_state.rop_analysis_result.copy()
         
         st.markdown("---"); st.header("🔍 Filter Hasil")
-        # ... (Kode filter tidak berubah) ...
+        col_f1, col_f2, col_f3 = st.columns(3)
+        kategori_options = sorted(result_df['Kategori Barang'].dropna().unique().astype(str))
+        selected_kategori = col_f1.multiselect("Kategori:", kategori_options)
+        brand_options = sorted(result_df['BRAND Barang'].dropna().unique().astype(str))
+        selected_brand = col_f2.multiselect("Brand:", brand_options)
+        product_options = sorted(result_df['Nama Barang'].dropna().unique().astype(str))
+        selected_products = col_f3.multiselect("Nama Produk:", product_options)
+        
+        if selected_kategori: result_df = result_df[result_df['Kategori Barang'].astype(str).isin(selected_kategori)]
+        if selected_brand: result_df = result_df[result_df['BRAND Barang'].astype(str).isin(selected_brand)]
+        if selected_products: result_df = result_df[result_df['Nama Barang'].astype(str).isin(selected_products)]
+        
+        st.markdown("---")
         
         result_df['Date'] = result_df['Date'].dt.strftime('%Y-%m-%d')
+
         pivot_outputs = {}
+
         st.header("Tabel ROP & SO per Kota")
         
         unique_cities = [str(city) for city in result_df['City'].dropna().unique()]
         
         for city in sorted(unique_cities):
             with st.expander(f"📍 Lihat Hasil untuk Kota: {city}", expanded=(city == "Surabaya")):
-                # ... (Sisa kode untuk menampilkan dan mengunduh tidak berubah) ...
+                city_df = result_df[result_df['City'] == city].copy()
+                if not city_df.empty:
+                    
+                    index_cols = ['No. Barang', 'Nama Barang', 'BRAND Barang', 'Kategori Barang']
+                    for col in index_cols:
+                        city_df[col] = city_df[col].fillna('Data Tidak Ditemukan')
+                    
+                    pivot_city = city_df.pivot_table(
+                        index=index_cols, 
+                        columns='Date', 
+                        values=['ROP', 'SO']
+                    ).fillna(0).astype(int)
+                    
+                    pivot_city.columns = pivot_city.columns.swaplevel(0, 1)
+                    pivot_city.sort_index(axis=1, level=0, inplace=True)
+                    
+                    pivot_outputs[f"ROP_{city.replace(' ', '_')}"] = pivot_city
+                    
+                    st.markdown(pivot_city.to_html(), unsafe_allow_html=True)
+                else:
+                    st.write("Tidak ada data yang cocok dengan filter.")
+        
+        if pivot_outputs:
+            st.markdown("---")
+            st.header("💾 Unduh Hasil Analisis")
+
+            output = BytesIO()
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                for sheet_name, df_pivot in pivot_outputs.items():
+                    df_pivot.to_excel(writer, sheet_name=sheet_name, index=True)
+            
+            st.download_button(
+                label="📥 Unduh Semua Hasil ROP & SO (Excel)",
+                data=output.getvalue(),
+                file_name=f"hasil_rop_so_{start_date}_to_{end_date}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
 
 # =====================================================================================
 #                           HALAMAN ANALISIS ERROR METODE ROP
@@ -336,19 +433,17 @@ elif page == "Analisis Error Metode ROP":
                 progress_bar = st.progress(0, text="Memulai...")
 
                 # Hitung ROP untuk setiap metode
-                all_methods_data = calculate_rop_and_sellout(penjualan, produk_ref, start_date, end_date, "ABC Bertingkat")
-                all_methods_data.rename(columns={'ROP': 'ROP_ABC'}, inplace=True)
+                rop_abc = calculate_rop_and_sellout(penjualan, produk_ref, start_date, end_date, "ABC Bertingkat").rename(columns={'ROP': 'ROP_ABC'})
                 progress_bar.progress(33, text="Metode ABC Bertingkat selesai...")
                 
-                rop_uniform = calculate_rop_and_sellout(penjualan, produk_ref, start_date, end_date, "Uniform")[['Date', 'City', 'No. Barang', 'ROP']].rename(columns={'ROP': 'ROP_Uniform'})
-                all_methods_data = pd.merge(all_methods_data, rop_uniform, on=['Date', 'City', 'No. Barang'])
+                rop_uniform_df = calculate_rop_and_sellout(penjualan, produk_ref, start_date, end_date, "Uniform")[['Date', 'City', 'No. Barang', 'ROP']].rename(columns={'ROP': 'ROP_Uniform'})
+                merged_rop = pd.merge(rop_abc, rop_uniform_df, on=['Date', 'City', 'No. Barang'])
                 progress_bar.progress(66, text="Metode Uniform selesai...")
 
-                rop_min = calculate_rop_and_sellout(penjualan, produk_ref, start_date, end_date, "ROP = Min Stock")[['Date', 'City', 'No. Barang', 'ROP']].rename(columns={'ROP': 'ROP_Min_Stock'})
-                all_methods_data = pd.merge(all_methods_data, rop_min, on=['Date', 'City', 'No. Barang'])
+                rop_min_df = calculate_rop_and_sellout(penjualan, produk_ref, start_date, end_date, "ROP = Min Stock")[['Date', 'City', 'No. Barang', 'ROP']].rename(columns={'ROP': 'ROP_Min_Stock'})
+                final_analysis_df = pd.merge(merged_rop, rop_min_df, on=['Date', 'City', 'No. Barang'])
                 progress_bar.progress(90, text="Metode Min Stock selesai...")
 
-                final_analysis_df = all_methods_data.copy()
                 final_analysis_df.dropna(subset=['Penjualan_Riil_21_Hari'], inplace=True)
 
                 final_analysis_df['Error_ABC'] = (final_analysis_df['Penjualan_Riil_21_Hari'] - final_analysis_df['ROP_ABC']).abs()
@@ -363,4 +458,39 @@ elif page == "Analisis Error Metode ROP":
         
         st.markdown("---")
         st.header("🏆 Hasil Perbandingan Metode")
-        # ... (Sisa kode untuk menampilkan hasil analisis error tidak berubah) ...
+
+        mae_abc = result_df['Error_ABC'].mean()
+        mae_uniform = result_df['Error_Uniform'].mean()
+        mae_min_stock = result_df['Error_Min_Stock'].mean()
+
+        summary_data = {
+            'Metode ROP': ['ABC Bertingkat', 'Uniform', 'ROP = Min Stock'],
+            'Rata-Rata Error (MAE)': [mae_abc, mae_uniform, mae_min_stock]
+        }
+        summary_df = pd.DataFrame(summary_data).set_index('Metode ROP')
+        summary_df['Rata-Rata Error (MAE)'] = summary_df['Rata-Rata Error (MAE)'].round(2)
+        
+        st.subheader("Skor Error Keseluruhan (Semakin Kecil Semakin Baik)")
+        st.dataframe(summary_df.style.highlight_min(color='lightgreen', axis=0))
+
+        st.subheader("Visualisasi Perbandingan Error")
+        st.bar_chart(summary_df)
+
+        with st.expander("Lihat Rata-Rata Error per Kota"):
+            mae_per_city = result_df.groupby('City')[['Error_ABC', 'Error_Uniform', 'Error_Min_Stock']].mean().round(2)
+            mae_per_city.columns = ['MAE ABC', 'MAE Uniform', 'MAE Min Stock']
+            st.dataframe(mae_per_city.style.highlight_min(color='lightgreen', axis=1))
+
+        with st.expander("Lihat Detail Data Analisis"):
+            result_df_display = result_df.copy()
+            if 'No. Barang' in result_df_display.columns:
+                result_df_display['No. Barang'] = result_df_display['No. Barang'].astype(str)
+            st.dataframe(result_df_display)
+            
+            excel_data = convert_df_to_excel(result_df)
+            st.download_button(
+                label="📥 Unduh Detail Analisis Error (Excel)",
+                data=excel_data,
+                file_name=f"analisis_error_rop_{start_date}_to_{end_date}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
