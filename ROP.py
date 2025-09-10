@@ -102,7 +102,7 @@ def map_nama_dept(row):
     return mapping.get(dept, 'X')
 
 def map_city(nama_dept):
-    if nama_dept in ['A - ITC', 'A - RETAIL', 'C - PUSAT', 'G - PROJECT']: return 'Surabaya'
+    if nama_dept in ['A - ITC', 'A - RETAIL', 'C - PUSAT', 'G': 'G - PROJECT']: return 'Surabaya'
     elif nama_dept == 'B - JKT': return 'Jakarta'
     elif nama_dept == 'D - SMG': return 'Semarang'
     elif nama_dept == 'E - JOG': return 'Jogja'
@@ -312,12 +312,11 @@ elif page == "Hasil Analisa ROP":
                         values=['ROP', 'SO']
                     ).fillna(0).astype(int)
                     
+                    # --- PERUBAHAN FORMAT TAMPILAN ---
+                    # 1. Tukar level kolom (Date menjadi level atas)
                     pivot_city.columns = pivot_city.columns.swaplevel(0, 1)
+                    # 2. Urutkan berdasarkan level atas (Date), lalu level bawah (ROP/SO)
                     pivot_city.sort_index(axis=1, level=0, inplace=True)
-                    
-                    # --- PERBAIKAN: Meratakan kolom dan RESET INDEX ---
-                    pivot_city.columns = [f'{col[0]}_{col[1]}' for col in pivot_city.columns]
-                    pivot_city.reset_index(inplace=True)
 
                     st.dataframe(pivot_city, use_container_width=True)
                 else:
@@ -339,13 +338,12 @@ elif page == "Hasil Analisa ROP":
                     aggfunc='sum'
                 ).fillna(0).astype(int)
 
+                # --- PERUBAHAN FORMAT TAMPILAN ---
+                # 1. Tukar level kolom (Date menjadi level atas)
                 pivot_all.columns = pivot_all.columns.swaplevel(0, 1)
+                # 2. Urutkan berdasarkan level atas (Date), lalu level bawah (ROP/SO)
                 pivot_all.sort_index(axis=1, level=0, inplace=True)
                 
-                # --- PERBAIKAN: Meratakan kolom dan RESET INDEX ---
-                pivot_all.columns = [f'{col[0]}_{col[1]}' for col in pivot_all.columns]
-                pivot_all.reset_index(inplace=True)
-
                 st.dataframe(pivot_all, use_container_width=True)
         else:
             st.warning("Tidak ada data untuk ditampilkan berdasarkan filter.")
