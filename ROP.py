@@ -132,7 +132,49 @@ def convert_df_to_excel(df):
 if page == "Input Data":
     st.title("📥 Input Data")
     st.markdown("Muat atau muat ulang data yang diperlukan dari Google Drive.")
-    # ... (Kode di halaman ini tidak berubah) ...
+
+    if not DRIVE_AVAILABLE:
+        st.warning("Tidak dapat melanjutkan karena koneksi ke Google Drive gagal.")
+        st.stop()
+
+    st.header("1. Data Penjualan")
+    with st.spinner("Mencari file penjualan di Google Drive..."):
+        penjualan_files_list = list_files_in_folder(drive_service, folder_penjualan)
+    if st.button("Muat / Muat Ulang Data Penjualan"):
+        if penjualan_files_list:
+            with st.spinner("Menggabungkan semua file penjualan..."):
+                df_penjualan = pd.concat([download_and_read(f['id'], f['name']) for f in penjualan_files_list], ignore_index=True)
+                st.session_state.df_penjualan = df_penjualan
+                st.success("Data penjualan berhasil dimuat ulang.")
+        else:
+            st.warning("⚠️ Tidak ada file penjualan ditemukan di folder Google Drive.")
+
+    if not st.session_state.df_penjualan.empty:
+        df_penjualan = st.session_state.df_penjualan
+        st.success(f"✅ Data penjualan telah dimuat ({len(df_penjualan)} baris).")
+        df_penjualan['Tgl Faktur'] = pd.to_datetime(df_penjualan['Tgl Faktur'], errors='coerce')
+        min_date = df_penjualan['Tgl Faktur'].min()
+        max_date = df_penjualan['Tgl Faktur'].max()
+        
+        if pd.notna(min_date) and pd.notna(max_date):
+            num_months = len(df_penjualan['Tgl Faktur'].dt.to_period('M').unique())
+            st.info(f"📅 **Rentang Data:** Dari **{min_date.strftime('%d %B %Y')}** hingga **{max_date.strftime('%d %B %Y')}** ({num_months} bulan data).")
+        st.dataframe(df_penjualan)
+
+    st.header("2. Produk Referensi")
+    with st.spinner("Mencari file produk di Google Drive..."):
+        produk_files_list = list_files_in_folder(drive_service, folder_produk)
+    selected_produk_file = st.selectbox(
+        "Pilih file Produk dari Google Drive:",
+        options=[None] + produk_files_list,
+        format_func=lambda x: x['name'] if x else "Pilih file"
+    )
+    if selected_produk_file:
+        with st.spinner(f"Memuat file {selected_produk_file['name']}..."):
+            st.session_state.produk_ref = read_produk_file(selected_produk_file['id'])
+            st.success(f"File produk referensi '{selected_produk_file['name']}' berhasil dimuat.")
+    if not st.session_state.produk_ref.empty:
+        st.dataframe(st.session_state.produk_ref.head())
 
 # =====================================================================================
 #                                    HALAMAN HASIL ANALISA ROP
