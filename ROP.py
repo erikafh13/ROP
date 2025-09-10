@@ -179,13 +179,8 @@ elif page == "Hasil Analisa ROP":
 
         # 2. Fungsi inti untuk memproses setiap grup produk-kota
         def process_group(group):
-            # Mengisi tanggal yang kosong dengan penjualan 0
             group = group.set_index('Date').reindex(date_range_full, fill_value=0)
-            
-            # Ganti nama 'Kuantitas' menjadi 'Sell Out' untuk kejelasan
             group.rename(columns={'Kuantitas': 'Sell Out'}, inplace=True)
-            
-            # Kalkulasi rolling pada data sell out harian
             sales_30d = group['Sell Out'].rolling(window=30, min_periods=1).sum()
             sales_60d = group['Sell Out'].rolling(window=60, min_periods=1).sum()
             sales_90d = group['Sell Out'].rolling(window=90, min_periods=1).sum()
@@ -193,7 +188,6 @@ elif page == "Hasil Analisa ROP":
             
             group['WMA'] = (sales_30d * 0.5) + ((sales_60d - sales_30d) * 0.3) + ((sales_90d - sales_60d) * 0.2)
             group['std_dev_90d'] = std_dev_90d
-            # Jangan hapus kolom 'Sell Out', biarkan untuk hasil akhir
             return group
 
         # 3. Terapkan fungsi ke setiap grup dan gabungkan hasilnya
@@ -230,11 +224,9 @@ elif page == "Hasil Analisa ROP":
         final_df = pd.merge(final_df, produk_df, on='No. Barang', how='left')
         final_df = final_df[final_df['Date'].dt.date >= start_date].copy()
         
-        # Pembulatan dan konversi tipe data untuk hasil akhir yang bersih
         final_df['ROP'] = final_df['ROP'].round().astype(int)
         final_df['Sell Out'] = final_df['Sell Out'].astype(int)
         
-        # Pilih kolom-kolom yang akan dikembalikan
         return_cols = ['Date', 'City', 'No. Barang', 'Kategori Barang', 'BRAND Barang', 'Nama Barang', 'ROP', 'Sell Out']
         return final_df[return_cols]
 
@@ -267,7 +259,7 @@ elif page == "Hasil Analisa ROP":
     st.header("Pilih Rentang Tanggal untuk Analisis")
     
     default_end_date = penjualan['Tgl Faktur'].max().date()
-    default_start_date = default_end_date - timedelta(days=6) # Default 7 hari
+    default_start_date = default_end_date - timedelta(days=6)
 
     col1, col2 = st.columns(2)
     start_date = col1.date_input("Tanggal Awal", value=default_start_date, key="rop_start")
@@ -314,17 +306,21 @@ elif page == "Hasil Analisa ROP":
         unique_cities = [str(city) for city in result_df['City'].dropna().unique()]
         
         for city in sorted(unique_cities):
-            with st.expander(f"📍 Lihat Hasil untuk Kota: {city}", expanded=(city == "Surabaya")): # Default buka Surabaya
-                city_df = result_df[result_df['City'] == city]
+            with st.expander(f"📍 Lihat Hasil untuk Kota: {city}", expanded=(city == "Surabaya")):
+                city_df = result_df[result_df['City'] == city].copy() # Gunakan .copy() untuk menghindari warning
                 if not city_df.empty:
-                    # Buat pivot table dengan dua nilai: ROP dan Sell Out
+                    
+                    # --- PERBAIKAN KUNCI: Isi nilai kosong sebelum pivot ---
+                    index_cols = ['No. Barang', 'Nama Barang', 'BRAND Barang', 'Kategori Barang']
+                    for col in index_cols:
+                        city_df[col] = city_df[col].fillna('Data Tidak Ditemukan')
+                    
                     pivot_city = city_df.pivot_table(
-                        index=['No. Barang', 'Nama Barang', 'BRAND Barang', 'Kategori Barang'], 
+                        index=index_cols, 
                         columns='Date', 
-                        values=['ROP', 'Sell Out'] # Tambahkan 'Sell Out'
+                        values=['ROP', 'Sell Out']
                     ).fillna(0).astype(int)
                     
-                    # Urutkan kolom berdasarkan Tanggal, lalu ROP/Sell Out
                     pivot_city = pivot_city.reindex(sorted(pivot_city.columns), axis=1)
                     st.dataframe(pivot_city, use_container_width=True)
                 else:
@@ -333,15 +329,20 @@ elif page == "Hasil Analisa ROP":
         st.header("📊 Tabel Gabungan ROP & Sell Out Seluruh Kota")
         if not result_df.empty:
             with st.spinner("Membuat tabel pivot gabungan..."):
-                # Agregasi total untuk ROP dan Sell Out
-                pivot_all = result_df.pivot_table(
-                    index=['No. Barang', 'Nama Barang', 'BRAND Barang', 'Kategori Barang'], 
+                
+                # --- PERBAIKAN KUNCI: Isi nilai kosong sebelum pivot ---
+                df_all = result_df.copy()
+                index_cols_all = ['No. Barang', 'Nama Barang', 'BRAND Barang', 'Kategori Barang']
+                for col in index_cols_all:
+                    df_all[col] = df_all[col].fillna('Data Tidak Ditemukan')
+
+                pivot_all = df_all.pivot_table(
+                    index=index_cols_all, 
                     columns='Date', 
-                    values=['ROP', 'Sell Out'], # Tambahkan 'Sell Out'
+                    values=['ROP', 'Sell Out'],
                     aggfunc='sum'
                 ).fillna(0).astype(int)
 
-                # Urutkan kolom berdasarkan Tanggal, lalu ROP/Sell Out
                 pivot_all = pivot_all.reindex(sorted(pivot_all.columns), axis=1)
                 st.dataframe(pivot_all, use_container_width=True)
         else:
