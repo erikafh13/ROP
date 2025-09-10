@@ -56,6 +56,7 @@ try:
 
     if credentials:
         drive_service = build('drive', 'v3', credentials=credentials)
+        # Ganti dengan ID folder Anda jika berbeda
         folder_penjualan = "1wH9o4dyNfjve9ScJ_DB2TwT0EDsPe9Zf" 
         folder_produk = "1UdGbFzZ2Wv83YZLNwdU-rgY-LXlczsFv"
         DRIVE_AVAILABLE = True
@@ -250,7 +251,7 @@ elif page == "Hasil Analisa ROP":
         return_cols = ['Date', 'City', 'No. Barang', 'Kategori Barang', 'BRAND Barang', 'Nama Barang', 'ROP', 'SO']
         return final_df[return_cols]
 
-    # --- [DIKEMBALIKAN] UI & Logika Halaman ---
+    # --- UI & Logika Halaman ---
     if st.session_state.df_penjualan.empty or st.session_state.produk_ref.empty:
         st.warning("⚠️ Harap muat file **Penjualan** dan **Produk Referensi** di halaman **'Input Data'**.")
         st.stop()
@@ -301,7 +302,6 @@ elif page == "Hasil Analisa ROP":
         else:
             with st.spinner(f"Menghitung ROP & SO dari {start_date} hingga {end_date}..."):
                 try:
-                    # Panggil fungsi dengan metode yang dipilih dari sidebar
                     rop_result_df = calculate_rop_and_sellout(penjualan, produk_ref, start_date, end_date, metode_rop)
                     if not rop_result_df.empty:
                         st.session_state.rop_analysis_result = rop_result_df
@@ -358,35 +358,14 @@ elif page == "Hasil Analisa ROP":
                     
                     pivot_outputs[f"ROP_{city.replace(' ', '_')}"] = pivot_city
                     
-                    st.markdown(pivot_city.to_html(), unsafe_allow_html=True)
+                    # --- PERBAIKAN: Meratakan kolom untuk st.dataframe ---
+                    display_df = pivot_city.copy()
+                    display_df.columns = ['_'.join(col).strip() for col in display_df.columns.values]
+                    
+                    st.dataframe(display_df, use_container_width=True)
                 else:
                     st.write("Tidak ada data yang cocok dengan filter.")
-
-        st.header("📊 Tabel Gabungan ROP & SO Seluruh Kota")
-        if not result_df.empty:
-            with st.spinner("Membuat tabel pivot gabungan..."):
-                
-                df_all = result_df.copy()
-                index_cols_all = ['No. Barang', 'Nama Barang', 'BRAND Barang', 'Kategori Barang']
-                for col in index_cols_all:
-                    df_all[col] = df_all[col].fillna('Data Tidak Ditemukan')
-
-                pivot_all = df_all.pivot_table(
-                    index=index_cols_all, 
-                    columns='Date', 
-                    values=['ROP', 'SO'],
-                    aggfunc='sum'
-                ).fillna(0).astype(int)
-
-                pivot_all.columns = pivot_all.columns.swaplevel(0, 1)
-                pivot_all.sort_index(axis=1, level=0, inplace=True)
-
-                pivot_outputs['ROP_Gabungan_Semua_Kota'] = pivot_all
-                
-                st.markdown(pivot_all.to_html(), unsafe_allow_html=True)
-        else:
-            st.warning("Tidak ada data untuk ditampilkan berdasarkan filter.")
-
+        
         if pivot_outputs:
             st.markdown("---")
             st.header("💾 Unduh Hasil Analisis")
@@ -446,7 +425,6 @@ elif page == "Analisis Error Metode ROP":
             with st.spinner("Menjalankan analisis error untuk 3 metode... Ini mungkin memakan waktu."):
                 progress_bar = st.progress(0, text="Memulai...")
 
-                # 1. Hitung ROP untuk setiap metode
                 rop_abc = calculate_rop_and_sellout(penjualan, produk_ref, start_date, end_date, "ABC Bertingkat")[['Date', 'City', 'No. Barang', 'SO', 'ROP']].rename(columns={'ROP': 'ROP_ABC'})
                 progress_bar.progress(33, text="Metode ABC Bertingkat selesai...")
                 
@@ -456,19 +434,15 @@ elif page == "Analisis Error Metode ROP":
                 rop_min = calculate_rop_and_sellout(penjualan, produk_ref, start_date, end_date, "ROP = Min Stock")[['Date', 'City', 'No. Barang', 'ROP']].rename(columns={'ROP': 'ROP_Min_Stock'})
                 progress_bar.progress(80, text="Metode Min Stock selesai...")
 
-                # 2. Gabungkan hasil ROP
                 merged_rop = pd.merge(rop_abc, rop_uniform, on=['Date', 'City', 'No. Barang'])
                 merged_rop = pd.merge(merged_rop, rop_min, on=['Date', 'City', 'No. Barang'])
 
-                # 3. Hitung penjualan riil 21 hari ke depan
                 daily_sales_full = merged_rop.set_index('Date').groupby(['City', 'No. Barang'])['SO'].shift(-21).rolling(window=21, min_periods=1).sum().reset_index()
                 daily_sales_full = daily_sales_full.rename(columns={'SO': 'Penjualan_Riil_21_Hari'})
                 
-                # 4. Gabungkan semua data
                 final_analysis_df = pd.merge(merged_rop, daily_sales_full, on=['Date', 'City', 'No. Barang'])
                 final_analysis_df.dropna(inplace=True)
 
-                # 5. Hitung Error (Selisih Absolut)
                 final_analysis_df['Error_ABC'] = (final_analysis_df['Penjualan_Riil_21_Hari'] - final_analysis_df['ROP_ABC']).abs()
                 final_analysis_df['Error_Uniform'] = (final_analysis_df['Penjualan_Riil_21_Hari'] - final_analysis_df['ROP_Uniform']).abs()
                 final_analysis_df['Error_Min_Stock'] = (final_analysis_df['Penjualan_Riil_21_Hari'] - final_analysis_df['ROP_Min_Stock']).abs()
@@ -482,7 +456,6 @@ elif page == "Analisis Error Metode ROP":
         st.markdown("---")
         st.header("🏆 Hasil Perbandingan Metode")
 
-        # Hitung Rata-rata Error (MAE)
         mae_abc = result_df['Error_ABC'].mean()
         mae_uniform = result_df['Error_Uniform'].mean()
         mae_min_stock = result_df['Error_Min_Stock'].mean()
