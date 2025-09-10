@@ -128,7 +128,7 @@ def convert_df_to_excel(df):
     processed_data = output.getvalue()
     return processed_data
     
-# --- [PERBAIKAN] FUNGSI UTAMA DIPINDAH KE GLOBAL SCOPE ---
+# --- FUNGSI UTAMA PERHITUNGAN ROP (GLOBAL) ---
 @st.cache_data(ttl=3600)
 def calculate_rop_and_sellout(penjualan_df, produk_df, start_date, end_date, method):
     analysis_start_date = pd.to_datetime(start_date) - pd.DateOffset(days=90)
