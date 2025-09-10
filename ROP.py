@@ -301,9 +301,11 @@ elif page == "Hasil Analisa ROP":
 
         st.header("Tabel ROP per Kota")
         
-        # --- PERBAIKAN KUNCI: Membersihkan daftar kota sebelum diurutkan ---
-        # Ini akan menghapus nilai NaN yang menyebabkan error
-        unique_cities = result_df['City'].dropna().unique()
+        # --- PERBAIKAN KUNCI: Membersihkan dan mengonversi tipe data sebelum diurutkan ---
+        # 1. Hapus nilai yang hilang (NaN)
+        # 2. Pastikan semua nilai adalah string
+        # 3. Baru urutkan
+        unique_cities = [str(city) for city in result_df['City'].dropna().unique()]
         
         for city in sorted(unique_cities):
             with st.expander(f"📍 Lihat Hasil ROP untuk Kota: {city}"):
