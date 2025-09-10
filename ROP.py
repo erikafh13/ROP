@@ -181,7 +181,6 @@ elif page == "Hasil Analisa ROP":
         def process_group(group):
             group = group.set_index('Date').reindex(date_range_full, fill_value=0)
             sales_30d = group['Kuantitas'].rolling(window=30, min_periods=1).sum()
-            # --- FIX #1: Typo 'Kuantuas' menjadi 'Kuantitas' ---
             sales_60d = group['Kuantitas'].rolling(window=60, min_periods=1).sum()
             sales_90d = group['Kuantitas'].rolling(window=90, min_periods=1).sum()
             std_dev_90d = group['Kuantitas'].rolling(window=90, min_periods=1).std().fillna(0)
@@ -215,9 +214,6 @@ elif page == "Hasil Analisa ROP":
         # 6. Hitung metrik final ROP
         z_scores = {'A': 1.65, 'B': 1.0, 'C': 0.0, 'D': 0.0}
         final_df['Z_Score'] = final_df['Kategori ABC'].map(z_scores).fillna(0)
-        
-        # --- PERBAIKAN KUNCI: Konversi Z_Score ke tipe float ---
-        # Ini memastikan operasi matematika dapat berjalan tanpa error.
         final_df['Z_Score'] = final_df['Z_Score'].astype(float)
         
         final_df['Safety Stock'] = final_df['Z_Score'] * final_df['std_dev_90d'] * math.sqrt(0.7)
@@ -301,11 +297,15 @@ elif page == "Hasil Analisa ROP":
         
         st.markdown("---")
         
-        # Fix untuk PyArrow Error: Konversi kolom 'Date' ke format string sebelum pivot
         result_df['Date'] = result_df['Date'].dt.strftime('%Y-%m-%d')
 
         st.header("Tabel ROP per Kota")
-        for city in sorted(result_df['City'].unique()):
+        
+        # --- PERBAIKAN KUNCI: Membersihkan daftar kota sebelum diurutkan ---
+        # Ini akan menghapus nilai NaN yang menyebabkan error
+        unique_cities = result_df['City'].dropna().unique()
+        
+        for city in sorted(unique_cities):
             with st.expander(f"📍 Lihat Hasil ROP untuk Kota: {city}"):
                 city_df = result_df[result_df['City'] == city]
                 if not city_df.empty:
