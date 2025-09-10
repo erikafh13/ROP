@@ -208,22 +208,29 @@ if page == "Input Data":
         if penjualan_files_list:
             with st.spinner("Menggabungkan semua file penjualan..."):
                 df_penjualan = pd.concat([download_and_read(f['id'], f['name']) for f in penjualan_files_list], ignore_index=True)
+                # --- PERBAIKAN: Konversi tipe data langsung setelah memuat ---
+                if 'No. Barang' in df_penjualan.columns:
+                    df_penjualan['No. Barang'] = df_penjualan['No. Barang'].astype(str)
                 st.session_state.df_penjualan = df_penjualan
                 st.success("Data penjualan berhasil dimuat ulang.")
         else:
             st.warning("⚠️ Tidak ada file penjualan ditemukan di folder Google Drive.")
 
     if not st.session_state.df_penjualan.empty:
-        df_penjualan = st.session_state.df_penjualan
-        st.success(f"✅ Data penjualan telah dimuat ({len(df_penjualan)} baris).")
-        df_penjualan['Tgl Faktur'] = pd.to_datetime(df_penjualan['Tgl Faktur'], errors='coerce')
-        min_date = df_penjualan['Tgl Faktur'].min()
-        max_date = df_penjualan['Tgl Faktur'].max()
+        df_penjualan_display = st.session_state.df_penjualan.copy()
+        st.success(f"✅ Data penjualan telah dimuat ({len(df_penjualan_display)} baris).")
+        df_penjualan_display['Tgl Faktur'] = pd.to_datetime(df_penjualan_display['Tgl Faktur'], errors='coerce')
+        min_date = df_penjualan_display['Tgl Faktur'].min()
+        max_date = df_penjualan_display['Tgl Faktur'].max()
         
         if pd.notna(min_date) and pd.notna(max_date):
-            num_months = len(df_penjualan['Tgl Faktur'].dt.to_period('M').unique())
+            num_months = len(df_penjualan_display['Tgl Faktur'].dt.to_period('M').unique())
             st.info(f"📅 **Rentang Data:** Dari **{min_date.strftime('%d %B %Y')}** hingga **{max_date.strftime('%d %B %Y')}** ({num_months} bulan data).")
-        st.dataframe(df_penjualan)
+        
+        # --- PERBAIKAN: Pastikan tipe data benar sebelum ditampilkan ---
+        if 'No. Barang' in df_penjualan_display.columns:
+            df_penjualan_display['No. Barang'] = df_penjualan_display['No. Barang'].astype(str)
+        st.dataframe(df_penjualan_display)
 
     st.header("2. Produk Referensi")
     with st.spinner("Mencari file produk di Google Drive..."):
@@ -235,7 +242,11 @@ if page == "Input Data":
     )
     if selected_produk_file:
         with st.spinner(f"Memuat file {selected_produk_file['name']}..."):
-            st.session_state.produk_ref = read_produk_file(selected_produk_file['id'])
+            produk_df = read_produk_file(selected_produk_file['id'])
+            # --- PERBAIKAN: Konversi tipe data langsung setelah memuat ---
+            if 'No. Barang' in produk_df.columns:
+                produk_df['No. Barang'] = produk_df['No. Barang'].astype(str)
+            st.session_state.produk_ref = produk_df
             st.success(f"File produk referensi '{selected_produk_file['name']}' berhasil dimuat.")
     if not st.session_state.produk_ref.empty:
         st.dataframe(st.session_state.produk_ref.head())
@@ -358,14 +369,10 @@ elif page == "Hasil Analisa ROP":
                     
                     pivot_outputs[f"ROP_{city.replace(' ', '_')}"] = pivot_city
                     
-                    # Meratakan kolom untuk st.dataframe
-                    display_df = pivot_city.copy()
-                    display_df.columns = ['_'.join(col).strip() for col in display_df.columns.values]
-                    
-                    st.dataframe(display_df, use_container_width=True)
+                    st.markdown(pivot_city.to_html(), unsafe_allow_html=True)
                 else:
                     st.write("Tidak ada data yang cocok dengan filter.")
-        
+
         if pivot_outputs:
             st.markdown("---")
             st.header("💾 Unduh Hasil Analisis")
@@ -479,7 +486,11 @@ elif page == "Analisis Error Metode ROP":
             st.dataframe(mae_per_city.style.highlight_min(color='lightgreen', axis=1))
 
         with st.expander("Lihat Detail Data Analisis"):
-            st.dataframe(result_df)
+            # --- PERBAIKAN: Pastikan tipe data benar sebelum ditampilkan ---
+            result_df_display = result_df.copy()
+            result_df_display['No. Barang'] = result_df_display['No. Barang'].astype(str)
+            st.dataframe(result_df_display)
+            
             excel_data = convert_df_to_excel(result_df)
             st.download_button(
                 label="📥 Unduh Detail Analisis Error (Excel)",
