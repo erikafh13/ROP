@@ -315,9 +315,10 @@ elif page == "Hasil Analisa ROP":
                     pivot_city.columns = pivot_city.columns.swaplevel(0, 1)
                     pivot_city.sort_index(axis=1, level=0, inplace=True)
                     
-                    # --- PERBAIKAN KUNCI: Meratakan kolom untuk Streamlit ---
-                    pivot_city.columns = [f'{col[0]} {col[1]}' for col in pivot_city.columns]
-                    
+                    # --- PERBAIKAN: Meratakan kolom dan RESET INDEX ---
+                    pivot_city.columns = [f'{col[0]}_{col[1]}' for col in pivot_city.columns]
+                    pivot_city.reset_index(inplace=True)
+
                     st.dataframe(pivot_city, use_container_width=True)
                 else:
                     st.write("Tidak ada data yang cocok dengan filter.")
@@ -341,9 +342,10 @@ elif page == "Hasil Analisa ROP":
                 pivot_all.columns = pivot_all.columns.swaplevel(0, 1)
                 pivot_all.sort_index(axis=1, level=0, inplace=True)
                 
-                # --- PERBAIKAN KUNCI: Meratakan kolom untuk Streamlit ---
-                pivot_all.columns = [f'{col[0]} {col[1]}' for col in pivot_all.columns]
-                
+                # --- PERBAIKAN: Meratakan kolom dan RESET INDEX ---
+                pivot_all.columns = [f'{col[0]}_{col[1]}' for col in pivot_all.columns]
+                pivot_all.reset_index(inplace=True)
+
                 st.dataframe(pivot_all, use_container_width=True)
         else:
             st.warning("Tidak ada data untuk ditampilkan berdasarkan filter.")
