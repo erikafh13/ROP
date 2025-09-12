@@ -59,7 +59,7 @@ try:
 
     if credentials:
         drive_service = build('drive', 'v3', credentials=credentials)
-        folder_penjualan = "1wH9o4dyNfjve9ScJ_DB2TwT0EDsPe9Zf"
+        folder_penjualan = "1wH9o4dyNfjveScJ_DB2TwT0EDsPe9Zf"
         folder_produk = "1UdGbFzZ2Wv83YZLNwdU-rgY-LXlczsFv"
         DRIVE_AVAILABLE = True
 
@@ -154,17 +154,15 @@ def preprocess_sales_data(_penjualan_df, _produk_df, start_date, end_date):
     if unique_items.empty:
         return pd.DataFrame()
 
-    all_cities = unique_items['City'].unique()
-    all_products = unique_items['No. Barang'].unique()
-
-    index_product = pd.MultiIndex.from_product(
-        [all_cities, all_products, date_range_full],
-        names=['City', 'No. Barang', 'Date']
-    )
-    df_full = pd.DataFrame(index=index_product)
-    df_full = df_full.join(daily_sales.set_index(['City', 'No. Barang', 'Date'])).fillna(0).reset_index()
-
-    # --- [PERBAIKAN] Melakukan set_index di awal dan menjaga index unik ---
+    # --- [PERBAIKAN] Membuat grid data lengkap dengan cara yang lebih aman ---
+    date_df = pd.DataFrame({'Date': date_range_full})
+    # Lakukan cross join hanya antara pasangan (Kota, Barang) yang valid dengan rentang tanggal.
+    df_full = unique_items.merge(date_df, how='cross')
+    # Gabungkan dengan data penjualan aktual.
+    df_full = df_full.merge(daily_sales, on=['City', 'No. Barang', 'Date'], how='left').fillna(0)
+    # Pastikan data diurutkan dengan benar untuk perhitungan rolling.
+    df_full.sort_values(['City', 'No. Barang', 'Date'], inplace=True)
+    
     # Atur MultiIndex yang unik (Kota, Barang, Tanggal) sebagai index utama.
     df_full.set_index(['City', 'No. Barang', 'Date'], inplace=True)
     
