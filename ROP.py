@@ -33,6 +33,8 @@ if 'rop_analysis_result' not in st.session_state:
     st.session_state.rop_analysis_result = None
 if 'error_analysis_result' not in st.session_state:
     st.session_state.error_analysis_result = None
+if 'summary_error_result' not in st.session_state:
+    st.session_state.summary_error_result = None
 
 # --------------------------------Fungsi Umum & Google Drive--------------------------------
 
@@ -86,7 +88,6 @@ def download_and_read(file_id, file_name, **kwargs):
     fh = download_file_from_gdrive(file_id)
     return pd.read_csv(fh, **kwargs) if file_name.endswith('.csv') else pd.read_excel(fh, **kwargs)
 
-# --- [PERBAIKAN] Fungsi dibuat lebih fleksibel ---
 def read_produk_file(file_id, sheet_name, skip_rows):
     try:
         fh = download_file_from_gdrive(file_id)
@@ -132,9 +133,7 @@ def convert_df_to_excel(df):
     processed_data = output.getvalue()
     return processed_data
     
-# --- [REFAKTORISASI] FUNGSI UTAMA PERHITUNGAN ROP ---
-
-# 1. FUNGSI INTI (BERAT) UNTUK PREPROCESSING DATA
+# --- FUNGSI UTAMA PERHITUNGAN ROP ---
 @st.cache_data(ttl=3600)
 def preprocess_sales_data(_penjualan_df, _produk_df, start_date, end_date):
     penjualan_df = _penjualan_df.copy()
@@ -143,50 +142,66 @@ def preprocess_sales_data(_penjualan_df, _produk_df, start_date, end_date):
     analysis_start_date = pd.to_datetime(start_date) - pd.DateOffset(days=90)
     extended_end_date = pd.to_datetime(end_date) + pd.DateOffset(days=21)
     date_range_full = pd.date_range(start=analysis_start_date, end=extended_end_date, freq='D')
-    
+
     daily_sales = penjualan_df.groupby(['Tgl Faktur', 'City', 'No. Barang'])['Kuantitas'].sum().reset_index()
-    daily_sales.rename(columns={'Tgl Faktur': 'Date'}, inplace=True)
+    daily_sales.rename(columns={'Tgl Faktur': 'Date', 'Kuantitas': 'SO'}, inplace=True)
     daily_sales['Date'] = pd.to_datetime(daily_sales['Date'])
 
-    def process_group(group):
-        group = group.set_index('Date').reindex(date_range_full, fill_value=0)
-        group.rename(columns={'Kuantitas': 'SO'}, inplace=True)
-        sales_30d = group['SO'].rolling(window=30, min_periods=1).sum()
-        sales_60d = group['SO'].rolling(window=60, min_periods=1).sum()
-        sales_90d = group['SO'].rolling(window=90, min_periods=1).sum()
-        std_dev_90d = group['SO'].rolling(window=90, min_periods=1).std().fillna(0)
-        
-        group['WMA'] = (sales_30d * 0.5) + ((sales_60d - sales_30d) * 0.3) + ((sales_90d - sales_60d) * 0.2)
-        group['std_dev_90d'] = std_dev_90d
-        group['Penjualan_Riil_21_Hari'] = group['SO'].iloc[::-1].rolling(window=21, min_periods=0).sum().iloc[::-1].shift(-21)
-        return group
+    unique_items = daily_sales[['City', 'No. Barang']].drop_duplicates()
+    if unique_items.empty:
+        return pd.DataFrame()
 
-    processed_data = daily_sales.groupby(['City', 'No. Barang'], group_keys=False).apply(process_group).reset_index()
-    processed_data.rename(columns={'index': 'Date'}, inplace=True)
-    processed_data['Date'] = pd.to_datetime(processed_data['Date'])
+    all_cities = unique_items['City'].unique()
+    all_products = unique_items['No. Barang'].unique()
     
-    avg_sales = processed_data.groupby(['City', 'No. Barang'])['WMA'].mean().reset_index()
+    index_product = pd.MultiIndex.from_product(
+        [all_cities, all_products, date_range_full],
+        names=['City', 'No. Barang', 'Date']
+    )
+    df_full = pd.DataFrame(index=index_product)
+    df_full = df_full.join(daily_sales.set_index(['City', 'No. Barang', 'Date'])).fillna(0).reset_index()
+
+    grouped = df_full.set_index('Date').groupby(['City', 'No. Barang'])['SO']
+    sales_90d = grouped.rolling(window=90, min_periods=1).sum().reset_index(level=[0,1], drop=True)
+    std_dev_90d = grouped.rolling(window=90, min_periods=1).std().reset_index(level=[0,1], drop=True).fillna(0)
+    
+    df_full = df_full.set_index(['City', 'No. Barang', 'Date'])
+    df_full['sales_90d'] = sales_90d
+    df_full['std_dev_90d'] = std_dev_90d
+    
+    # --- [LOGIKA BARU] Hitung Average Daily Sales (ADS) dari histori 90 hari ---
+    df_full['ADS'] = df_full['sales_90d'] / 90
+
+    forward_sum_calculator = lambda x: x.iloc[::-1].rolling(window=21, min_periods=0).sum().iloc[::-1].shift(-21)
+    df_full['Penjualan_Aktual_21_Hari'] = df_full.groupby(['City', 'No. Barang'])['SO'].transform(forward_sum_calculator)
+    
+    df_full.reset_index(inplace=True)
+
+    avg_ads = df_full.groupby(['City', 'No. Barang'])['ADS'].mean().reset_index()
     def classify_abc(df_city):
-        df_city = df_city.sort_values(by='WMA', ascending=False)
-        total_sales = df_city['WMA'].sum()
-        if total_sales > 0:
-            df_city['Cumulative_Perc'] = 100 * df_city['WMA'].cumsum() / total_sales
+        df_city = df_city.sort_values(by='ADS', ascending=False)
+        total_ads = df_city['ADS'].sum()
+        if total_ads > 0:
+            df_city['Cumulative_Perc'] = 100 * df_city['ADS'].cumsum() / total_ads
             df_city['Kategori ABC'] = pd.cut(df_city['Cumulative_Perc'], bins=[-1, 70, 90, 101], labels=['A', 'B', 'C'], right=True)
         else:
             df_city['Kategori ABC'] = 'D'
         return df_city[['City', 'No. Barang', 'Kategori ABC']]
 
-    abc_classification = avg_sales.groupby('City', group_keys=False).apply(classify_abc).reset_index(drop=True)
-    final_df = pd.merge(processed_data, abc_classification, on=['City', 'No. Barang'], how='left')
+    abc_classification = avg_ads.groupby('City', group_keys=False).apply(classify_abc).reset_index(drop=True)
+    
+    final_df = pd.merge(df_full, abc_classification, on=['City', 'No. Barang'], how='left')
     final_df = pd.merge(final_df, produk_df, on='No. Barang', how='left')
     
-    # Filter tanggal dilakukan setelah semua data digabungkan
     final_df = final_df[(final_df['Date'].dt.date >= pd.to_datetime(start_date).date()) & (final_df['Date'].dt.date <= pd.to_datetime(end_date).date())].copy()
     
     return final_df
 
-# 2. FUNGSI RINGAN UNTUK MENERAPKAN METODE ROP
+
 def apply_rop_method(df, method):
+    LEAD_TIME_DAYS = 21
+    FORECAST_PERIOD_DAYS = 90
+
     df_copy = df.copy()
 
     if method == "ABC Bertingkat":
@@ -196,20 +211,31 @@ def apply_rop_method(df, method):
     else: # ROP = Min Stock
         z_scores = {'A': 0.0, 'B': 0.0, 'C': 0.0, 'D': 0.0}
 
-    df_copy['Z_Score'] = df_copy['Kategori ABC'].map(z_scores).fillna(0).astype(float)
-    df_copy['Safety Stock'] = df_copy['Z_Score'] * df_copy['std_dev_90d'] * math.sqrt(21/30) # sqrt(lead_time/forecast_period)
-    df_copy['Min Stock'] = df_copy['WMA'] * (21/30)
-    df_copy['ROP'] = (df_copy['Min Stock'] + df_copy['Safety Stock']).round().astype(int)
+    df_copy['Kategori ABC'] = df_copy['Kategori ABC'].cat.add_categories('D').fillna('D')
+    df_copy['Z_Score'] = df_copy['Kategori ABC'].map(z_scores)
+    
+    # --- [LOGIKA BARU] Hitung komponen ROP ---
+    # 1. Prediksi Stok Minimal berdasarkan ADS
+    df_copy['Prediksi_Stok_Minimal'] = df_copy['ADS'] * LEAD_TIME_DAYS
+    
+    # 2. Safety Stock berdasarkan variabilitas
+    lead_time_ratio_std = LEAD_TIME_DAYS / FORECAST_PERIOD_DAYS
+    df_copy['Safety_Stock'] = df_copy['Z_Score'] * df_copy['std_dev_90d'] * math.sqrt(lead_time_ratio_std)
+    
+    # 3. Prediksi Total (ROP) adalah gabungan keduanya
+    df_copy['ROP'] = df_copy['Prediksi_Stok_Minimal'] + df_copy['Safety_Stock']
+    
+    df_copy['ROP'] = df_copy['ROP'].round().astype(int)
     df_copy['SO'] = df_copy['SO'].astype(int)
 
-    return_cols = ['Date', 'City', 'No. Barang', 'Kategori Barang', 'BRAND Barang', 'Nama Barang', 'ROP', 'SO', 'Penjualan_Riil_21_Hari']
-    return df_copy[return_cols]
+    return df_copy
 
-# =====================================================================================
-#                                    HALAMAN INPUT DATA
-# =====================================================================================
 
+# (Sisa kode untuk Halaman Input Data dan Hasil Analisa ROP tetap sama, tidak perlu diubah)
+# ...
+# Halaman Input Data
 if page == "Input Data":
+    # ... (kode tidak berubah)
     st.title("📥 Input Data")
     st.markdown("Muat atau muat ulang data yang diperlukan dari Google Drive.")
 
@@ -256,7 +282,6 @@ if page == "Input Data":
         format_func=lambda x: x['name'] if x else "Pilih file"
     )
 
-    # --- [PERBAIKAN] Opsi konfigurasi file Excel ---
     if selected_produk_file:
         with st.form("product_file_config"):
             st.info("Harap konfigurasikan cara membaca file Excel yang dipilih.")
@@ -278,10 +303,9 @@ if page == "Input Data":
         st.success(f"✅ Data produk referensi telah dimuat ({len(st.session_state.produk_ref)} baris).")
         st.dataframe(st.session_state.produk_ref.head())
 
-# =====================================================================================
-#                                HALAMAN HASIL ANALISA ROP
-# =====================================================================================
+# Halaman Hasil Analisa ROP
 elif page == "Hasil Analisa ROP":
+    # ... (kode tidak berubah)
     st.title("📈 Hasil Analisa ROP & Sell Out")
 
     st.sidebar.header("🔧 Pengaturan Metode ROP")
@@ -294,7 +318,6 @@ elif page == "Hasil Analisa ROP":
         st.warning("⚠️ Harap muat file **Penjualan** dan **Produk Referensi** di halaman **'Input Data'**.")
         st.stop()
 
-    # Preprocessing data penjualan (bagian yang cepat)
     penjualan = st.session_state.df_penjualan.copy()
     produk_ref = st.session_state.produk_ref.copy()
     
@@ -329,7 +352,7 @@ elif page == "Hasil Analisa ROP":
             st.error("Tanggal Awal tidak boleh melebihi Tanggal Akhir.")
         else:
             try:
-                with st.spinner(f"Menjalankan pra-pemrosesan data..."):
+                with st.spinner(f"Menjalankan pra-pemrosesan data... Ini mungkin butuh waktu untuk rentang panjang."):
                     preprocessed_df = preprocess_sales_data(penjualan, produk_ref, start_date, end_date)
                 
                 with st.spinner(f"Menerapkan metode '{metode_rop}'..."):
@@ -339,7 +362,7 @@ elif page == "Hasil Analisa ROP":
                     st.session_state.rop_analysis_result = rop_result_df
                     st.success(f"Analisis berhasil dijalankan!")
                 else:
-                    st.error("Tidak ada data yang dihasilkan.")
+                    st.error("Tidak ada data yang dihasilkan untuk rentang yang dipilih.")
             except Exception as e:
                 st.error(f"Terjadi kesalahan saat perhitungan: {e}")
                 st.exception(e)
@@ -389,7 +412,16 @@ elif page == "Hasil Analisa ROP":
                     
                     pivot_outputs[f"ROP_{city.replace(' ', '_')}"] = pivot_city
                     
-                    st.dataframe(pivot_city)
+                    cmap_rop = 'Greens'
+                    cmap_so = 'Blues'
+                    styled_pivot = pivot_city.style.background_gradient(
+                        cmap=cmap_rop,
+                        subset=pd.IndexSlice[:, pd.IndexSlice[:, 'ROP']]
+                    ).background_gradient(
+                        cmap=cmap_so,
+                        subset=pd.IndexSlice[:, pd.IndexSlice[:, 'SO']]
+                    ).format("{:}")
+                    st.write(styled_pivot.to_html(), unsafe_allow_html=True)
                 else:
                     st.write("Tidak ada data yang cocok dengan filter.")
         
@@ -408,19 +440,17 @@ elif page == "Hasil Analisa ROP":
                 file_name=f"hasil_rop_so_{start_date}_to_{end_date}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
-
 # =====================================================================================
-#                          HALAMAN ANALISIS ERROR METODE ROP
+#                          HALAMAN ANALISIS ERROR METODE ROP (LOGIKA BARU)
 # =====================================================================================
 elif page == "Analisis Error Metode ROP":
     st.title("🎯 Analisis Error Metode ROP")
-    st.markdown("Halaman ini membandingkan 3 metode ROP dengan penjualan riil untuk menemukan metode mana yang paling akurat.")
+    st.markdown("Halaman ini membandingkan 3 metode ROP dengan penjualan riil untuk melihat kecenderungan **Overstock** vs **Stockout**.")
     
     if st.session_state.df_penjualan.empty or st.session_state.produk_ref.empty:
         st.warning("⚠️ Harap muat file **Penjualan** dan **Produk Referensi** di halaman **'Input Data'**.")
         st.stop()
 
-    # Preprocessing data (bagian yang cepat)
     penjualan = st.session_state.df_penjualan.copy()
     produk_ref = st.session_state.produk_ref.copy()
     for df in [penjualan, produk_ref]:
@@ -436,7 +466,7 @@ elif page == "Analisis Error Metode ROP":
     
     st.markdown("---")
     st.header("Pilih Rentang Tanggal untuk Analisis Error")
-    st.info("Pilih rentang tanggal yang cukup panjang untuk evaluasi. Pastikan data penjualan Anda mencakup 21 hari setelah tanggal akhir yang dipilih untuk perbandingan yang akurat.")
+    st.info("Pilih rentang tanggal evaluasi. Pastikan data penjualan Anda mencakup 21 hari setelah tanggal akhir untuk perbandingan akurat.")
     
     default_end_date = penjualan['Tgl Faktur'].max().date() - timedelta(days=21)
     default_start_date = default_end_date - timedelta(days=29)
@@ -449,64 +479,73 @@ elif page == "Analisis Error Metode ROP":
         if start_date > end_date:
             st.error("Tanggal Awal tidak boleh melebihi Tanggal Akhir.")
         else:
-            progress_bar = st.progress(0, text="Memulai...")
-            
-            # --- [PERBAIKAN EFISIENSI] Panggil fungsi berat HANYA SEKALI ---
-            progress_bar.progress(10, text="Menjalankan pra-pemrosesan data (langkah terberat)...")
-            preprocessed_df = preprocess_sales_data(penjualan, produk_ref, start_date, end_date)
-            
-            progress_bar.progress(50, text="Menerapkan metode ROP...")
-            # Terapkan setiap metode pada data yang sudah diproses
-            rop_abc = apply_rop_method(preprocessed_df, "ABC Bertingkat")
-            rop_uniform = apply_rop_method(preprocessed_df, "Uniform")
-            rop_min = apply_rop_method(preprocessed_df, "ROP = Min Stock")
-            
-            progress_bar.progress(80, text="Menggabungkan hasil dan menghitung error...")
-            # Gabungkan hasilnya
-            final_analysis_df = rop_abc.rename(columns={'ROP': 'ROP_ABC'})
-            final_analysis_df['ROP_Uniform'] = rop_uniform['ROP']
-            final_analysis_df['ROP_Min_Stock'] = rop_min['ROP']
-            
-            final_analysis_df.dropna(subset=['Penjualan_Riil_21_Hari'], inplace=True)
-            
-            final_analysis_df['Error_ABC'] = (final_analysis_df['Penjualan_Riil_21_Hari'] - final_analysis_df['ROP_ABC']).abs()
-            final_analysis_df['Error_Uniform'] = (final_analysis_df['Penjualan_Riil_21_Hari'] - final_analysis_df['ROP_Uniform']).abs()
-            final_analysis_df['Error_Min_Stock'] = (final_analysis_df['Penjualan_Riil_21_Hari'] - final_analysis_df['ROP_Min_Stock']).abs()
+            with st.spinner("Menjalankan analisis... Ini mungkin butuh beberapa saat."):
+                progress_bar = st.progress(0, text="Memulai pra-pemrosesan data...")
+                preprocessed_df = preprocess_sales_data(penjualan, produk_ref, start_date, end_date)
+                progress_bar.progress(40, text="Menerapkan metode ROP...")
 
-            st.session_state.error_analysis_result = final_analysis_df
-            progress_bar.progress(100, text="Analisis Selesai!")
+                rop_abc = apply_rop_method(preprocessed_df, "ABC Bertingkat")
+                rop_uniform = apply_rop_method(preprocessed_df, "Uniform")
+                rop_min = apply_rop_method(preprocessed_df, "ROP = Min Stock")
+                
+                progress_bar.progress(70, text="Menggabungkan hasil dan menghitung error...")
+                
+                # Gabungkan ROP dari setiap metode
+                analysis_df = preprocessed_df.copy()
+                analysis_df['ROP_ABC'] = rop_abc['ROP']
+                analysis_df['ROP_Uniform'] = rop_uniform['ROP']
+                analysis_df['ROP_Min_Stock'] = rop_min['ROP']
+                
+                analysis_df.dropna(subset=['Penjualan_Aktual_21_Hari'], inplace=True)
+                
+                # --- [LOGIKA BARU] Hitung error directional (bukan absolut) ---
+                analysis_df['Error_ABC'] = analysis_df['ROP_ABC'] - analysis_df['Penjualan_Aktual_21_Hari']
+                analysis_df['Error_Uniform'] = analysis_df['ROP_Uniform'] - analysis_df['Penjualan_Aktual_21_Hari']
+                analysis_df['Error_Min_Stock'] = analysis_df['ROP_Min_Stock'] - analysis_df['Penjualan_Aktual_21_Hari']
 
-    if 'error_analysis_result' in st.session_state and st.session_state.error_analysis_result is not None:
+                st.session_state.error_analysis_result = analysis_df
+
+                # --- [LOGIKA BARU] Hitung metrik ringkasan ---
+                summary_list = []
+                for method in ['ABC', 'Uniform', 'Min_Stock']:
+                    error_col = f'Error_{method}'
+                    mae = analysis_df[error_col].abs().mean()
+                    bias = analysis_df[error_col].mean()
+                    stockout_days = (analysis_df[error_col] < 0).sum()
+                    summary_list.append({
+                        'Metode': method.replace('_', ' '),
+                        'MAE': mae,
+                        'Rata-rata Error (Bias)': bias,
+                        'Jumlah Hari Stockout': stockout_days
+                    })
+                
+                summary_df = pd.DataFrame(summary_list).set_index('Metode')
+                st.session_state.summary_error_result = summary_df
+                
+                progress_bar.progress(100, text="Analisis Selesai!")
+
+
+    if st.session_state.summary_error_result is not None:
+        summary_df = st.session_state.summary_error_result
         result_df = st.session_state.error_analysis_result
-        
+
         st.markdown("---")
         st.header("🏆 Hasil Perbandingan Metode")
-
-        mae_abc = result_df['Error_ABC'].mean()
-        mae_uniform = result_df['Error_Uniform'].mean()
-        mae_min_stock = result_df['Error_Min_Stock'].mean()
-
-        summary_data = {
-            'Metode ROP': ['ABC Bertingkat', 'Uniform', 'ROP = Min Stock'],
-            'Rata-Rata Error (MAE)': [mae_abc, mae_uniform, mae_min_stock]
-        }
-        summary_df = pd.DataFrame(summary_data).set_index('Metode ROP')
-        summary_df['Rata-Rata Error (MAE)'] = summary_df['Rata-Rata Error (MAE)'].round(2)
+        st.markdown("""
+        - **MAE (Mean Absolute Error)**: Rata-rata besaran kesalahan. *Semakin kecil semakin akurat*.
+        - **Rata-rata Error (Bias)**: Kecenderungan metode. *Positif berarti cenderung overstock, Negatif berarti cenderung stockout*.
+        - **Jumlah Hari Stockout**: Total kejadian prediksi lebih rendah dari aktual. *Semakin kecil semakin baik*.
+        """)
         
-        st.subheader("Skor Error Keseluruhan (Semakin Kecil Semakin Baik)")
-        st.dataframe(summary_df.style.highlight_min(color='lightgreen', axis=0))
+        # Tampilkan tabel ringkasan dengan highlight
+        st.dataframe(summary_df.style
+            .highlight_min(subset=['MAE', 'Jumlah Hari Stockout'], color='lightgreen')
+            .apply(lambda x: ['background-color: lightcoral' if v < 0 else '' for v in x], subset=['Rata-rata Error (Bias)'])
+            .format("{:.2f}", subset=['MAE', 'Rata-rata Error (Bias)'])
+        )
 
-        st.subheader("Visualisasi Perbandingan Error")
-        st.bar_chart(summary_df)
-
-        with st.expander("Lihat Rata-Rata Error per Kota"):
-            mae_per_city = result_df.groupby('City')[['Error_ABC', 'Error_Uniform', 'Error_Min_Stock']].mean().round(2)
-            mae_per_city.columns = ['MAE ABC', 'MAE Uniform', 'MAE Min Stock']
-            st.dataframe(mae_per_city.style.highlight_min(color='lightgreen', axis=1))
-
-        with st.expander("Lihat Detail Data Analisis"):
+        with st.expander("Lihat Detail Data Analisis Error"):
             st.dataframe(result_df)
-            
             excel_data = convert_df_to_excel(result_df)
             st.download_button(
                 label="📥 Unduh Detail Analisis Error (Excel)",
