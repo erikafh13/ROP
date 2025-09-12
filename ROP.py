@@ -171,9 +171,11 @@ def preprocess_sales_data(_penjualan_df, _produk_df, start_date, end_date):
     df_full = df_full.set_index(['City', 'No. Barang', 'Date'])
     df_full['sales_90d'] = sales_90d
     df_full['std_dev_90d'] = std_dev_90d
-
+    
+    # Sesuai referensi: Hitung Penjualan Harian Rata-rata (ADS) dari histori 90 hari.
     df_full['ADS'] = df_full['sales_90d'] / 90
 
+    # Sesuai referensi: Dapatkan Penjualan Aktual untuk 21 hari ke depan sebagai pembanding.
     forward_sum_calculator = lambda x: x.iloc[::-1].rolling(window=21, min_periods=0).sum().iloc[::-1].shift(-21)
     df_full['Penjualan_Aktual_21_Hari'] = df_full.groupby(['City', 'No. Barang'])['SO'].transform(forward_sum_calculator)
 
@@ -220,11 +222,13 @@ def apply_rop_method(df, method):
 
     df_copy['Z_Score'] = df_copy['Kategori ABC'].map(z_scores)
 
+    # Sesuai referensi: Hitung Stok Minimal yang Diprediksi.
     df_copy['Prediksi_Stok_Minimal'] = df_copy['ADS'] * LEAD_TIME_DAYS
 
     lead_time_ratio_std = LEAD_TIME_DAYS / FORECAST_PERIOD_DAYS
     df_copy['Safety_Stock'] = df_copy['Z_Score'] * df_copy['std_dev_90d'] * math.sqrt(lead_time_ratio_std)
 
+    # Prediksi akhir dari setiap metode adalah ROP (Stok Minimal + Safety Stock)
     df_copy['ROP'] = df_copy['Prediksi_Stok_Minimal'] + df_copy['Safety_Stock']
 
     df_copy['ROP'] = df_copy['ROP'].round().astype(int)
@@ -250,12 +254,34 @@ if page == "Input Data":
         penjualan_files_list = list_files_in_folder(drive_service, folder_penjualan)
     if st.button("Muat / Muat Ulang Data Penjualan"):
         if penjualan_files_list:
-            with st.spinner("Menggabungkan semua file penjualan..."):
-                df_penjualan = pd.concat([download_and_read(f['id'], f['name']) for f in penjualan_files_list], ignore_index=True)
-                if 'No. Barang' in df_penjualan.columns:
-                    df_penjualan['No. Barang'] = df_penjualan['No. Barang'].astype(str)
-                st.session_state.df_penjualan = df_penjualan
-                st.success("Data penjualan berhasil dimuat ulang.")
+            # --- Progress bar untuk proses pemuatan data ---
+            progress_bar = st.progress(0, text="Memulai proses pemuatan data...")
+            all_dfs = []
+            total_files = len(penjualan_files_list)
+
+            try:
+                for i, file_info in enumerate(penjualan_files_list):
+                    progress_text = f"Memuat file {i + 1}/{total_files}: {file_info['name']}"
+                    progress_bar.progress((i + 1) / total_files, text=progress_text)
+                    df = download_and_read(file_info['id'], file_info['name'])
+                    all_dfs.append(df)
+
+                progress_bar.progress(1.0, text="Menggabungkan semua data...")
+                if all_dfs:
+                    df_penjualan = pd.concat(all_dfs, ignore_index=True)
+                    if 'No. Barang' in df_penjualan.columns:
+                        df_penjualan['No. Barang'] = df_penjualan['No. Barang'].astype(str)
+                    st.session_state.df_penjualan = df_penjualan
+                    progress_bar.empty()
+                    st.success("Data penjualan berhasil dimuat ulang.")
+                else:
+                    progress_bar.empty()
+                    st.warning("Tidak ada data untuk digabungkan.")
+
+            except Exception as e:
+                progress_bar.empty()
+                st.error(f"Terjadi kesalahan saat memuat file: {e}")
+                st.exception(e)
         else:
             st.warning("⚠️ Tidak ada file penjualan ditemukan di folder Google Drive.")
 
@@ -500,6 +526,8 @@ elif page == "Analisis Error Metode ROP":
 
                 analysis_df.dropna(subset=['Penjualan_Aktual_21_Hari'], inplace=True)
 
+                # Sesuai referensi: Hitung Error = Prediksi (ROP) - Penjualan Aktual.
+                # Nilai positif berarti Overstock (prediksi > aktual), negatif berarti Stockout (prediksi < aktual).
                 analysis_df['Error_ABC'] = analysis_df['ROP_ABC'] - analysis_df['Penjualan_Aktual_21_Hari']
                 analysis_df['Error_Uniform'] = analysis_df['ROP_Uniform'] - analysis_df['Penjualan_Aktual_21_Hari']
                 analysis_df['Error_Min_Stock'] = analysis_df['ROP_Min_Stock'] - analysis_df['Penjualan_Aktual_21_Hari']
@@ -551,3 +579,4 @@ elif page == "Analisis Error Metode ROP":
                 file_name=f"analisis_error_rop_{start_date}_to_{end_date}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
+
