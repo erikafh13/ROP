@@ -59,7 +59,7 @@ try:
 
     if credentials:
         drive_service = build('drive', 'v3', credentials=credentials)
-        folder_penjualan = "1wH9o4dyNfjve9ScJ_DB2TwT0EDsPe9Zf"
+        folder_penjualan = "1wH9o4dyNfjveScJ_DB2TwT0EDsPe9Zf"
         folder_produk = "1UdGbFzZ2Wv83YZLNwdU-rgY-LXlczsFv"
         DRIVE_AVAILABLE = True
 
@@ -164,11 +164,18 @@ def preprocess_sales_data(_penjualan_df, _produk_df, start_date, end_date):
     df_full = pd.DataFrame(index=index_product)
     df_full = df_full.join(daily_sales.set_index(['City', 'No. Barang', 'Date'])).fillna(0).reset_index()
 
-    grouped = df_full.set_index('Date').groupby(['City', 'No. Barang'])['SO']
-    sales_90d = grouped.rolling(window=90, min_periods=1).sum().reset_index(level=[0,1], drop=True)
-    std_dev_90d = grouped.rolling(window=90, min_periods=1).std().reset_index(level=[0,1], drop=True).fillna(0)
+    # --- [PERBAIKAN] Melakukan set_index di awal dan menjaga index unik ---
+    # Atur MultiIndex yang unik (Kota, Barang, Tanggal) sebagai index utama.
+    df_full.set_index(['City', 'No. Barang', 'Date'], inplace=True)
+    
+    # Lakukan groupby pada level index, bukan kolom. Ini lebih efisien.
+    grouped = df_full.groupby(level=['City', 'No. Barang'])['SO']
 
-    df_full = df_full.set_index(['City', 'No. Barang', 'Date'])
+    # Hitung rolling. Hasilnya akan memiliki MultiIndex yang sama dan bisa langsung diselaraskan.
+    sales_90d = grouped.rolling(window=90, min_periods=1).sum()
+    std_dev_90d = grouped.rolling(window=90, min_periods=1).std().fillna(0)
+
+    # Masukkan hasil kalkulasi ke dataframe utama. Pandas akan menyelaraskannya secara otomatis.
     df_full['sales_90d'] = sales_90d
     df_full['std_dev_90d'] = std_dev_90d
     
@@ -177,7 +184,7 @@ def preprocess_sales_data(_penjualan_df, _produk_df, start_date, end_date):
 
     # Sesuai referensi: Dapatkan Penjualan Aktual untuk 21 hari ke depan sebagai pembanding.
     forward_sum_calculator = lambda x: x.iloc[::-1].rolling(window=21, min_periods=0).sum().iloc[::-1].shift(-21)
-    df_full['Penjualan_Aktual_21_Hari'] = df_full.groupby(['City', 'No. Barang'])['SO'].transform(forward_sum_calculator)
+    df_full['Penjualan_Aktual_21_Hari'] = df_full.groupby(level=['City', 'No. Barang'])['SO'].transform(forward_sum_calculator)
 
     df_full.reset_index(inplace=True)
 
