@@ -169,28 +169,25 @@ def preprocess_sales_data(_penjualan_df, _produk_df, start_date, end_date):
         
         # Kalkulasi penjualan 21 hari ke depan
         reversed_rolling_sum = group['SO'].iloc[::-1].rolling(window=21, min_periods=0).sum().iloc[::-1]
-        
-        # FIX: Menghapus .shift(-21) untuk memastikan perbandingan yang benar.
-        # Sekarang, ROP pada Hari H akan dibandingkan dengan penjualan riil dari Hari H hingga H+20.
-        group['Penjualan_Aktual_21_Hari'] = reversed_rolling_sum
+        group['Penjualan_Aktual_21_Hari'] = reversed_rolling_sum.shift(-21)
         return group
 
     # Terapkan fungsi ke setiap grup. Ini adalah inti dari perbaikan.
-    df_full = df_full.groupby(['City', 'No. Barang'], group_keys=False, include_groups=False).apply(calculate_metrics_for_group)
+    df_full = df_full.groupby(['City', 'No. Barang'], group_keys=False).apply(calculate_metrics_for_group)
 
     # --- Sisa fungsi berjalan seperti biasa ---
     avg_ads = df_full.groupby(['City', 'No. Barang'])['ADS'].mean().reset_index()
-    
-    if avg_ads.empty:
-        abc_classification = pd.DataFrame(columns=['City', 'No. Barang', 'Kategori ABC'])
-    else:
-        sorted_ads = avg_ads.sort_values(by=['City', 'ADS'], ascending=[True, False])
-        city_totals = sorted_ads.groupby('City')['ADS'].transform('sum')
-        sorted_ads['CUM_ADS'] = sorted_ads.groupby('City')['ADS'].cumsum()
-        sorted_ads['Cumulative_Perc'] = 100 * sorted_ads['CUM_ADS'] / city_totals.where(city_totals != 0, 1)
-        sorted_ads['Kategori ABC'] = pd.cut(sorted_ads['Cumulative_Perc'], bins=[-1, 70, 90, 101], labels=['A', 'B', 'C'], right=True)
-        sorted_ads.loc[city_totals == 0, 'Kategori ABC'] = 'D'
-        abc_classification = sorted_ads[['City', 'No. Barang', 'Kategori ABC']]
+    def classify_abc(df_city):
+        df_city = df_city.sort_values(by='ADS', ascending=False)
+        total_ads = df_city['ADS'].sum()
+        if total_ads > 0:
+            df_city['Cumulative_Perc'] = 100 * df_city['ADS'].cumsum() / total_ads
+            df_city['Kategori ABC'] = pd.cut(df_city['Cumulative_Perc'], bins=[-1, 70, 90, 101], labels=['A', 'B', 'C'], right=True)
+        else:
+            df_city['Kategori ABC'] = 'D'
+        return df_city[['City', 'No. Barang', 'Kategori ABC']]
+
+    abc_classification = avg_ads.groupby('City', group_keys=False).apply(classify_abc).reset_index(drop=True)
 
     final_df = pd.merge(df_full, abc_classification, on=['City', 'No. Barang'], how='left')
     final_df = pd.merge(final_df, produk_df, on='No. Barang', how='left')
@@ -329,7 +326,7 @@ elif page == "Hasil Analisa ROP":
     penjualan['City'] = penjualan['Nama Dept'].apply(map_city)
     penjualan = penjualan[penjualan['City'] != 'Others']
     penjualan['Tgl Faktur'] = pd.to_datetime(penjualan['Tgl Faktur'], errors='coerce')
-    penjualan.dropna(subset=['Tgl Faktur', 'City'], inplace=True)
+    penjualan.dropna(subset=['Tgl Faktur'], inplace=True)
     st.markdown("---")
     st.header("Pilih Rentang Tanggal untuk Analisis")
     default_end_date = penjualan['Tgl Faktur'].max().date()
@@ -432,7 +429,7 @@ elif page == "Analisis Error Metode ROP":
     penjualan['City'] = penjualan['Nama Dept'].apply(map_city)
     penjualan = penjualan[penjualan['City'] != 'Others']
     penjualan['Tgl Faktur'] = pd.to_datetime(penjualan['Tgl Faktur'], errors='coerce')
-    penjualan.dropna(subset=['Tgl Faktur', 'City'], inplace=True)
+    penjualan.dropna(subset=['Tgl Faktur'], inplace=True)
     st.markdown("---")
     st.header("Pilih Rentang Tanggal untuk Analisis Error")
     st.info("Pilih rentang tanggal evaluasi. Pastikan data penjualan Anda mencakup 21 hari setelah tanggal akhir untuk perbandingan akurat.")
@@ -501,5 +498,4 @@ elif page == "Analisis Error Metode ROP":
                 file_name=f"analisis_error_rop_{start_date}_to_{end_date}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
-
 
