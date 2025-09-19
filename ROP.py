@@ -161,7 +161,8 @@ def preprocess_sales_data(_penjualan_df, _produk_df, start_date, end_date):
         return group
 
     # Terapkan fungsi ke setiap grup. Ini adalah inti dari perbaikan.
-    df_full = df_full.groupby(['City', 'No. Barang'], group_keys=False, include_groups=False).apply(calculate_metrics_for_group)
+    # FIX: Menghapus argumen 'include_groups' yang tidak kompatibel dengan versi pandas lama
+    df_full = df_full.groupby(['City', 'No. Barang'], group_keys=False).apply(calculate_metrics_for_group)
 
     # --- Sisa fungsi berjalan seperti biasa ---
     avg_ads = df_full.groupby(['City', 'No. Barang'])['ADS'].mean().reset_index()
