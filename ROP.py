@@ -132,7 +132,7 @@ def convert_df_to_excel(df):
     processed_data = output.getvalue()
     return processed_data
 
-# --- FUNGSI UTAMA PERHITUNGAN ROP (VERSI EFISIEN) ---
+# --- GANTI SELURUH FUNGSI LAMA ANDA DENGAN YANG INI ---
 @st.cache_data(ttl=3600)
 def preprocess_sales_data(_penjualan_df, _produk_df, start_date, end_date):
     """
@@ -154,39 +154,28 @@ def preprocess_sales_data(_penjualan_df, _produk_df, start_date, end_date):
     if unique_items.empty:
         return pd.DataFrame()
 
-    # --- [PERBAIKAN] Membuat grid data lengkap dengan cara yang lebih aman ---
     date_df = pd.DataFrame({'Date': date_range_full})
-    # Lakukan cross join hanya antara pasangan (Kota, Barang) yang valid dengan rentang tanggal.
     df_full = unique_items.merge(date_df, how='cross')
-
-
-    # Gabungkan dengan data penjualan aktual.
     df_full = df_full.merge(daily_sales, on=['City', 'No. Barang', 'Date'], how='left').fillna(0)
-
-    # --- TAMBAHKAN BARIS INI UNTUK MENGATASI DUPLIKASI ---
-    df_full = df_full.groupby(['City', 'No. Barang', 'Date'], as_index=False)['SO'].sum()
-
-    # Pastikan data diurutkan dengan benar untuk perhitungan rolling.
+    
+    # --- PERBAIKAN UTAMA ADA DI BARIS INI ---
+    # Menjumlahkan duplikat (jika ada) dan memastikan setiap baris unik
+    df_full = df_full.groupby(['City', 'No. Barang', 'Date']).sum().reset_index()
+    
     df_full.sort_values(['City', 'No. Barang', 'Date'], inplace=True)
-
-    # Atur MultiIndex yang unik (Kota, Barang, Tanggal) sebagai index utama.
+    
     df_full.set_index(['City', 'No. Barang', 'Date'], inplace=True)
     
-    # Lakukan groupby pada level index, bukan kolom. Ini lebih efisien.
     grouped = df_full.groupby(level=['City', 'No. Barang'])['SO']
 
-    # Hitung rolling. Hasilnya akan memiliki MultiIndex yang sama dan bisa langsung diselaraskan.
     sales_90d = grouped.rolling(window=90, min_periods=1).sum()
     std_dev_90d = grouped.rolling(window=90, min_periods=1).std().fillna(0)
 
-    # Masukkan hasil kalkulasi ke dataframe utama. Pandas akan menyelaraskannya secara otomatis.
     df_full['sales_90d'] = sales_90d
     df_full['std_dev_90d'] = std_dev_90d
     
-    # Sesuai referensi: Hitung Penjualan Harian Rata-rata (ADS) dari histori 90 hari.
     df_full['ADS'] = df_full['sales_90d'] / 90
 
-    # Sesuai referensi: Dapatkan Penjualan Aktual untuk 21 hari ke depan sebagai pembanding.
     forward_sum_calculator = lambda x: x.iloc[::-1].rolling(window=21, min_periods=0).sum().iloc[::-1].shift(-21)
     df_full['Penjualan_Aktual_21_Hari'] = df_full.groupby(level=['City', 'No. Barang'])['SO'].transform(forward_sum_calculator)
 
