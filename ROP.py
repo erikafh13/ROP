@@ -158,11 +158,17 @@ def preprocess_sales_data(_penjualan_df, _produk_df, start_date, end_date):
     date_df = pd.DataFrame({'Date': date_range_full})
     # Lakukan cross join hanya antara pasangan (Kota, Barang) yang valid dengan rentang tanggal.
     df_full = unique_items.merge(date_df, how='cross')
+
+
     # Gabungkan dengan data penjualan aktual.
     df_full = df_full.merge(daily_sales, on=['City', 'No. Barang', 'Date'], how='left').fillna(0)
+
+    # --- TAMBAHKAN BARIS INI UNTUK MENGATASI DUPLIKASI ---
+    df_full = df_full.groupby(['City', 'No. Barang', 'Date'], as_index=False)['SO'].sum()
+
     # Pastikan data diurutkan dengan benar untuk perhitungan rolling.
     df_full.sort_values(['City', 'No. Barang', 'Date'], inplace=True)
-    
+
     # Atur MultiIndex yang unik (Kota, Barang, Tanggal) sebagai index utama.
     df_full.set_index(['City', 'No. Barang', 'Date'], inplace=True)
     
