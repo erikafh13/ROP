@@ -60,7 +60,7 @@ try:
 
     if credentials:
         drive_service = build('drive', 'v3', credentials=credentials)
-        folder_penjualan = "1wH9o4dyNfjve9ScJ_DB2TwT0EDsPe9Zf"
+        folder_penjualan = "1wH9o4dyNfjveScJ_DB2TwT0EDsPe9Zf"
         folder_produk = "1UdGbFzZ2Wv83YZLNwdU-rgY-LXlczsFv"
         DRIVE_AVAILABLE = True
 
@@ -178,26 +178,31 @@ def preprocess_sales_data(_penjualan_df, _produk_df, start_date, end_date):
     # --- Sisa fungsi berjalan seperti biasa ---
     avg_ads = df_full.groupby(['City', 'No. Barang'])['ADS'].mean().reset_index()
     
-    # --- PERBAIKAN: Mengganti .apply dengan metode vectorized untuk menghindari FutureWarning ---
-    # Sortir nilai terlebih dahulu, karena groupby mempertahankan urutan di dalam grup
-    sorted_ads = avg_ads.sort_values(by=['City', 'ADS'], ascending=[True, False])
-
-    # Hitung total ADS per kota menggunakan transform
-    city_totals = sorted_ads.groupby('City')['ADS'].transform('sum')
+    # --- PERBAIKAN: Membuat klasifikasi ABC lebih tangguh terhadap data kosong ---
     
-    # Hitung cumulative sum ADS per kota
-    sorted_ads['CUM_ADS'] = sorted_ads.groupby('City')['ADS'].cumsum()
+    # Handle kasus jika tidak ada data penjualan rata-rata untuk dianalisis
+    if avg_ads.empty:
+        abc_classification = pd.DataFrame(columns=['City', 'No. Barang', 'Kategori ABC'])
+    else:
+        # Sortir nilai terlebih dahulu, karena groupby mempertahankan urutan di dalam grup
+        sorted_ads = avg_ads.sort_values(by=['City', 'ADS'], ascending=[True, False])
 
-    # Hitung persentase kumulatif, hindari pembagian dengan nol
-    sorted_ads['Cumulative_Perc'] = 100 * sorted_ads['CUM_ADS'] / city_totals.where(city_totals != 0, 1)
+        # Hitung total ADS per kota menggunakan transform
+        city_totals = sorted_ads.groupby('City')['ADS'].transform('sum')
+        
+        # Hitung cumulative sum ADS per kota
+        sorted_ads['CUM_ADS'] = sorted_ads.groupby('City')['ADS'].cumsum()
 
-    # Terapkan kategori ABC
-    sorted_ads['Kategori ABC'] = pd.cut(sorted_ads['Cumulative_Perc'], bins=[-1, 70, 90, 101], labels=['A', 'B', 'C'], right=True)
+        # Hitung persentase kumulatif, hindari pembagian dengan nol
+        sorted_ads['Cumulative_Perc'] = 100 * sorted_ads['CUM_ADS'] / city_totals.where(city_totals != 0, 1)
 
-    # Tangani kasus di mana total ADS adalah nol
-    sorted_ads.loc[city_totals == 0, 'Kategori ABC'] = 'D'
+        # Terapkan kategori ABC
+        sorted_ads['Kategori ABC'] = pd.cut(sorted_ads['Cumulative_Perc'], bins=[-1, 70, 90, 101], labels=['A', 'B', 'C'], right=True)
 
-    abc_classification = sorted_ads[['City', 'No. Barang', 'Kategori ABC']]
+        # Tangani kasus di mana total ADS adalah nol
+        sorted_ads.loc[city_totals == 0, 'Kategori ABC'] = 'D'
+
+        abc_classification = sorted_ads[['City', 'No. Barang', 'Kategori ABC']]
 
     final_df = pd.merge(df_full, abc_classification, on=['City', 'No. Barang'], how='left')
     final_df = pd.merge(final_df, produk_df, on='No. Barang', how='left')
@@ -508,6 +513,7 @@ elif page == "Analisis Error Metode ROP":
                 file_name=f"analisis_error_rop_{start_date}_to_{end_date}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
+
 
 
 
