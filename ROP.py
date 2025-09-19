@@ -60,7 +60,7 @@ try:
 
     if credentials:
         drive_service = build('drive', 'v3', credentials=credentials)
-        folder_penjualan = "1wH9o4dyNfjve9ScJ_DB2TwT0EDsPe9Zf"
+        folder_penjualan = "1wH9o4dyNfjveScJ_DB2TwT0EDsPe9Zf"
         folder_produk = "1UdGbFzZ2Wv83YZLNwdU-rgY-LXlczsFv"
         DRIVE_AVAILABLE = True
 
@@ -538,41 +538,6 @@ elif page == "Analisis Error Metode ROP":
                     )
                 else:
                     st.write("Tidak ada data untuk kota ini.")
-
-        # --- BAGIAN BARU: Analisis per Brand ---
-        st.markdown("---")
-        st.header("🏭 Hasil Perbandingan per Brand")
-        
-        # Pastikan kolom brand ada dan tangani nilai yang hilang
-        if 'BRAND Barang' in result_df.columns:
-            unique_brands = sorted(result_df['BRAND Barang'].dropna().unique())
-            for brand in unique_brands:
-                with st.expander(f"Lihat Hasil untuk Brand: {brand}"):
-                    brand_df = result_df[result_df['BRAND Barang'] == brand]
-                    
-                    summary_list_brand = []
-                    if not brand_df.empty:
-                        for method in ['ABC', 'Uniform', 'Min_Stock']:
-                            error_col = f'Error_{method}'
-                            mae = brand_df[error_col].abs().mean()
-                            bias = brand_df[error_col].mean()
-                            stockout_days = (brand_df[error_col] < 0).sum()
-                            summary_list_brand.append({
-                                'Metode': method.replace('_', ' '),
-                                'MAE': mae,
-                                'Rata-rata Error (Bias)': bias,
-                                'Jumlah Hari Stockout': stockout_days
-                            })
-                        
-                        summary_df_brand = pd.DataFrame(summary_list_brand).set_index('Metode')
-                        
-                        st.dataframe(summary_df_brand.style
-                            .highlight_min(subset=['MAE', 'Jumlah Hari Stockout'], color='lightgreen')
-                            .apply(lambda x: ['background-color: lightcoral' if v < 0 else 'background-color: lightblue' for v in x], subset=['Rata-rata Error (Bias)'])
-                            .format("{:.2f}", subset=['MAE', 'Rata-rata Error (Bias)'])
-                        )
-                    else:
-                        st.write("Tidak ada data untuk brand ini.")
 
         # --- BAGIAN BARU: Kesimpulan Otomatis ---
         st.markdown("---")
