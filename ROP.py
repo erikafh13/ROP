@@ -60,7 +60,7 @@ try:
 
     if credentials:
         drive_service = build('drive', 'v3', credentials=credentials)
-        folder_penjualan = "1wH9o4dyNfjve9ScJ_DB2TwT0EDsPe9Zf"
+        folder_penjualan = "1wH9o4dyNfjveScJ_DB2TwT0EDsPe9Zf"
         folder_produk = "1UdGbFzZ2Wv83YZLNwdU-rgY-LXlczsFv"
         DRIVE_AVAILABLE = True
 
@@ -120,19 +120,6 @@ def map_city(nama_dept):
     elif nama_dept == 'H - BALI': return 'Bali'
     else: return 'Others'
 
-# --- FUNGSI KONVERSI EXCEL ---
-@st.cache_data
-def convert_df_to_excel(df):
-    output = BytesIO()
-    df_to_save = df.copy()
-    if isinstance(df.columns, pd.MultiIndex):
-        df_to_save.columns = ['_'.join(map(str, col)).strip() for col in df_to_save.columns.values]
-
-    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df_to_save.to_excel(writer, index=True, sheet_name='Sheet1')
-    processed_data = output.getvalue()
-    return processed_data
-
 # --- FUNGSI UTAMA PERHITUNGAN ROP (STRATEGI BARU) ---
 @st.cache_data(ttl=3600)
 def preprocess_sales_data(_penjualan_df, _produk_df, start_date, end_date):
@@ -169,25 +156,27 @@ def preprocess_sales_data(_penjualan_df, _produk_df, start_date, end_date):
         
         # Kalkulasi penjualan 21 hari ke depan
         reversed_rolling_sum = group['SO'].iloc[::-1].rolling(window=21, min_periods=0).sum().iloc[::-1]
-        group['Penjualan_Aktual_21_Hari'] = reversed_rolling_sum.shift(-21)
+        # FIX: Menghapus .shift() untuk perbandingan error yang benar
+        group['Penjualan_Aktual_21_Hari'] = reversed_rolling_sum
         return group
 
     # Terapkan fungsi ke setiap grup. Ini adalah inti dari perbaikan.
-    df_full = df_full.groupby(['City', 'No. Barang'], group_keys=False).apply(calculate_metrics_for_group)
+    df_full = df_full.groupby(['City', 'No. Barang'], group_keys=False, include_groups=False).apply(calculate_metrics_for_group)
 
     # --- Sisa fungsi berjalan seperti biasa ---
     avg_ads = df_full.groupby(['City', 'No. Barang'])['ADS'].mean().reset_index()
-    def classify_abc(df_city):
-        df_city = df_city.sort_values(by='ADS', ascending=False)
-        total_ads = df_city['ADS'].sum()
-        if total_ads > 0:
-            df_city['Cumulative_Perc'] = 100 * df_city['ADS'].cumsum() / total_ads
-            df_city['Kategori ABC'] = pd.cut(df_city['Cumulative_Perc'], bins=[-1, 70, 90, 101], labels=['A', 'B', 'C'], right=True)
-        else:
-            df_city['Kategori ABC'] = 'D'
-        return df_city[['City', 'No. Barang', 'Kategori ABC']]
-
-    abc_classification = avg_ads.groupby('City', group_keys=False).apply(classify_abc).reset_index(drop=True)
+    
+    if avg_ads.empty:
+        abc_classification = pd.DataFrame(columns=['City', 'No. Barang', 'Kategori ABC'])
+    else:
+        # FIX: Mengganti .apply dengan metode vectorized untuk menghindari FutureWarning
+        sorted_ads = avg_ads.sort_values(by=['City', 'ADS'], ascending=[True, False])
+        city_totals = sorted_ads.groupby('City')['ADS'].transform('sum')
+        sorted_ads['CUM_ADS'] = sorted_ads.groupby('City')['ADS'].cumsum()
+        sorted_ads['Cumulative_Perc'] = 100 * sorted_ads['CUM_ADS'] / city_totals.where(city_totals != 0, 1)
+        sorted_ads['Kategori ABC'] = pd.cut(sorted_ads['Cumulative_Perc'], bins=[-1, 70, 90, 101], labels=['A', 'B', 'C'], right=True)
+        sorted_ads.loc[city_totals == 0, 'Kategori ABC'] = 'D'
+        abc_classification = sorted_ads[['City', 'No. Barang', 'Kategori ABC']]
 
     final_df = pd.merge(df_full, abc_classification, on=['City', 'No. Barang'], how='left')
     final_df = pd.merge(final_df, produk_df, on='No. Barang', how='left')
@@ -326,7 +315,7 @@ elif page == "Hasil Analisa ROP":
     penjualan['City'] = penjualan['Nama Dept'].apply(map_city)
     penjualan = penjualan[penjualan['City'] != 'Others']
     penjualan['Tgl Faktur'] = pd.to_datetime(penjualan['Tgl Faktur'], errors='coerce')
-    penjualan.dropna(subset=['Tgl Faktur'], inplace=True)
+    penjualan.dropna(subset=['Tgl Faktur', 'City'], inplace=True)
     st.markdown("---")
     st.header("Pilih Rentang Tanggal untuk Analisis")
     default_end_date = penjualan['Tgl Faktur'].max().date()
@@ -429,15 +418,30 @@ elif page == "Analisis Error Metode ROP":
     penjualan['City'] = penjualan['Nama Dept'].apply(map_city)
     penjualan = penjualan[penjualan['City'] != 'Others']
     penjualan['Tgl Faktur'] = pd.to_datetime(penjualan['Tgl Faktur'], errors='coerce')
-    penjualan.dropna(subset=['Tgl Faktur'], inplace=True)
+    penjualan.dropna(subset=['Tgl Faktur', 'City'], inplace=True)
     st.markdown("---")
     st.header("Pilih Rentang Tanggal untuk Analisis Error")
     st.info("Pilih rentang tanggal evaluasi. Pastikan data penjualan Anda mencakup 21 hari setelah tanggal akhir untuk perbandingan akurat.")
-    default_end_date = penjualan['Tgl Faktur'].max().date() - timedelta(days=21)
-    default_start_date = default_end_date - timedelta(days=29)
+    
+    # FIX: Mengatur tanggal default ke Feb-April pada tahun terakhir data
+    try:
+        max_date_in_data = penjualan['Tgl Faktur'].max()
+        latest_year = max_date_in_data.year
+        # Batas analisis adalah 21 hari sebelum data terakhir
+        analysis_limit_date = max_date_in_data.date() - timedelta(days=21)
+        
+        default_start_date = datetime(latest_year, 2, 1).date()
+        # Gunakan 30 April sebagai akhir, kecuali jika melebihi batas data
+        default_end_date = min(datetime(latest_year, 4, 30).date(), analysis_limit_date)
+    except:
+        # Fallback jika tidak ada data
+        default_end_date = datetime.now().date() - timedelta(days=21)
+        default_start_date = default_end_date - timedelta(days=29)
+
     col1, col2 = st.columns(2)
     start_date = col1.date_input("Tanggal Awal", value=default_start_date, key="err_start")
     end_date = col2.date_input("Tanggal Akhir", value=default_end_date, key="err_end")
+    
     if st.button("🚀 Jalankan Analisis Error 🚀"):
         if start_date > end_date:
             st.error("Tanggal Awal tidak boleh melebihi Tanggal Akhir.")
@@ -458,7 +462,11 @@ elif page == "Analisis Error Metode ROP":
                 analysis_df['Error_ABC'] = analysis_df['ROP_ABC'] - analysis_df['Penjualan_Aktual_21_Hari']
                 analysis_df['Error_Uniform'] = analysis_df['ROP_Uniform'] - analysis_df['Penjualan_Aktual_21_Hari']
                 analysis_df['Error_Min_Stock'] = analysis_df['ROP_Min_Stock'] - analysis_df['Penjualan_Aktual_21_Hari']
+                
+                # Simpan hasil untuk digunakan nanti
                 st.session_state.error_analysis_result = analysis_df
+                
+                # Kalkulasi ringkasan keseluruhan
                 summary_list = []
                 for method in ['ABC', 'Uniform', 'Min_Stock']:
                     error_col = f'Error_{method}'
@@ -474,11 +482,13 @@ elif page == "Analisis Error Metode ROP":
                 summary_df = pd.DataFrame(summary_list).set_index('Metode')
                 st.session_state.summary_error_result = summary_df
                 progress_bar.progress(100, text="Analisis Selesai!")
+                
     if 'summary_error_result' in st.session_state and st.session_state.summary_error_result is not None:
         summary_df = st.session_state.summary_error_result
-        result_df = st.session_state.error_analysis_result
+        result_df = st.session_state.error_analysis_result # Ambil kembali data detail
+        
         st.markdown("---")
-        st.header("🏆 Hasil Perbandingan Metode")
+        st.header("🏆 Hasil Perbandingan Metode (Keseluruhan)")
         st.markdown("""
         - **MAE (Mean Absolute Error)**: Rata-rata besaran kesalahan. *Semakin kecil semakin akurat*.
         - **Rata-rata Error (Bias)**: Kecenderungan metode. *Positif berarti cenderung overstock, Negatif berarti cenderung stockout*.
@@ -489,13 +499,37 @@ elif page == "Analisis Error Metode ROP":
             .apply(lambda x: ['background-color: lightcoral' if v < 0 else 'background-color: lightblue' for v in x], subset=['Rata-rata Error (Bias)'])
             .format("{:.2f}", subset=['MAE', 'Rata-rata Error (Bias)'])
         )
-        with st.expander("Lihat Detail Data Analisis Error"):
-            st.dataframe(result_df)
-            excel_data = convert_df_to_excel(result_df)
-            st.download_button(
-                label="📥 Unduh Detail Analisis Error (Excel)",
-                data=excel_data,
-                file_name=f"analisis_error_rop_{start_date}_to_{end_date}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
+        
+        # --- BAGIAN BARU: Analisis per Kota ---
+        st.markdown("---")
+        st.header("🏙️ Hasil Perbandingan per Kota")
+        
+        unique_cities = sorted(result_df['City'].unique())
+        for city in unique_cities:
+            with st.expander(f"Lihat Hasil untuk Kota: {city}"):
+                city_df = result_df[result_df['City'] == city]
+                
+                summary_list_city = []
+                if not city_df.empty:
+                    for method in ['ABC', 'Uniform', 'Min_Stock']:
+                        error_col = f'Error_{method}'
+                        mae = city_df[error_col].abs().mean()
+                        bias = city_df[error_col].mean()
+                        stockout_days = (city_df[error_col] < 0).sum()
+                        summary_list_city.append({
+                            'Metode': method.replace('_', ' '),
+                            'MAE': mae,
+                            'Rata-rata Error (Bias)': bias,
+                            'Jumlah Hari Stockout': stockout_days
+                        })
+                    
+                    summary_df_city = pd.DataFrame(summary_list_city).set_index('Metode')
+                    
+                    st.dataframe(summary_df_city.style
+                        .highlight_min(subset=['MAE', 'Jumlah Hari Stockout'], color='lightgreen')
+                        .apply(lambda x: ['background-color: lightcoral' if v < 0 else 'background-color: lightblue' for v in x], subset=['Rata-rata Error (Bias)'])
+                        .format("{:.2f}", subset=['MAE', 'Rata-rata Error (Bias)'])
+                    )
+                else:
+                    st.write("Tidak ada data untuk kota ini.")
 
