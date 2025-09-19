@@ -173,21 +173,31 @@ def preprocess_sales_data(_penjualan_df, _produk_df, start_date, end_date):
         return group
 
     # Terapkan fungsi ke setiap grup. Ini adalah inti dari perbaikan.
-    df_full = df_full.groupby(['City', 'No. Barang'], group_keys=False).apply(calculate_metrics_for_group)
+    df_full = df_full.groupby(['City', 'No. Barang'], group_keys=False).apply(calculate_metrics_for_group, include_groups=False)
 
     # --- Sisa fungsi berjalan seperti biasa ---
     avg_ads = df_full.groupby(['City', 'No. Barang'])['ADS'].mean().reset_index()
-    def classify_abc(df_city):
-        df_city = df_city.sort_values(by='ADS', ascending=False)
-        total_ads = df_city['ADS'].sum()
-        if total_ads > 0:
-            df_city['Cumulative_Perc'] = 100 * df_city['ADS'].cumsum() / total_ads
-            df_city['Kategori ABC'] = pd.cut(df_city['Cumulative_Perc'], bins=[-1, 70, 90, 101], labels=['A', 'B', 'C'], right=True)
-        else:
-            df_city['Kategori ABC'] = 'D'
-        return df_city[['City', 'No. Barang', 'Kategori ABC']]
+    
+    # --- PERBAIKAN: Mengganti .apply dengan metode vectorized untuk menghindari FutureWarning ---
+    # Sortir nilai terlebih dahulu, karena groupby mempertahankan urutan di dalam grup
+    sorted_ads = avg_ads.sort_values(by=['City', 'ADS'], ascending=[True, False])
 
-    abc_classification = avg_ads.groupby('City', group_keys=False).apply(classify_abc).reset_index(drop=True)
+    # Hitung total ADS per kota menggunakan transform
+    city_totals = sorted_ads.groupby('City')['ADS'].transform('sum')
+    
+    # Hitung cumulative sum ADS per kota
+    sorted_ads['CUM_ADS'] = sorted_ads.groupby('City')['ADS'].cumsum()
+
+    # Hitung persentase kumulatif, hindari pembagian dengan nol
+    sorted_ads['Cumulative_Perc'] = 100 * sorted_ads['CUM_ADS'] / city_totals.where(city_totals != 0, 1)
+
+    # Terapkan kategori ABC
+    sorted_ads['Kategori ABC'] = pd.cut(sorted_ads['Cumulative_Perc'], bins=[-1, 70, 90, 101], labels=['A', 'B', 'C'], right=True)
+
+    # Tangani kasus di mana total ADS adalah nol
+    sorted_ads.loc[city_totals == 0, 'Kategori ABC'] = 'D'
+
+    abc_classification = sorted_ads[['City', 'No. Barang', 'Kategori ABC']]
 
     final_df = pd.merge(df_full, abc_classification, on=['City', 'No. Barang'], how='left')
     final_df = pd.merge(final_df, produk_df, on='No. Barang', how='left')
@@ -498,5 +508,6 @@ elif page == "Analisis Error Metode ROP":
                 file_name=f"analisis_error_rop_{start_date}_to_{end_date}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
+
 
 
