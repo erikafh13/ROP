@@ -341,7 +341,8 @@ elif page == "Hasil Analisa ROP":
     penjualan['City'] = penjualan['Nama Dept'].apply(map_city)
     penjualan = penjualan[penjualan['City'] != 'Others']
     penjualan['Tgl Faktur'] = pd.to_datetime(penjualan['Tgl Faktur'], errors='coerce')
-    penjualan.dropna(subset=['Tgl Faktur'], inplace=True)
+    # FIX: Memastikan baris tanpa Kota atau Tanggal valid dibuang sebelum analisis
+    penjualan.dropna(subset=['Tgl Faktur', 'City'], inplace=True)
     st.markdown("---")
     st.header("Pilih Rentang Tanggal untuk Analisis")
     default_end_date = penjualan['Tgl Faktur'].max().date()
@@ -444,7 +445,8 @@ elif page == "Analisis Error Metode ROP":
     penjualan['City'] = penjualan['Nama Dept'].apply(map_city)
     penjualan = penjualan[penjualan['City'] != 'Others']
     penjualan['Tgl Faktur'] = pd.to_datetime(penjualan['Tgl Faktur'], errors='coerce')
-    penjualan.dropna(subset=['Tgl Faktur'], inplace=True)
+    # FIX: Memastikan baris tanpa Kota atau Tanggal valid dibuang sebelum analisis
+    penjualan.dropna(subset=['Tgl Faktur', 'City'], inplace=True)
     st.markdown("---")
     st.header("Pilih Rentang Tanggal untuk Analisis Error")
     st.info("Pilih rentang tanggal evaluasi. Pastikan data penjualan Anda mencakup 21 hari setelah tanggal akhir untuk perbandingan akurat.")
@@ -513,6 +515,7 @@ elif page == "Analisis Error Metode ROP":
                 file_name=f"analisis_error_rop_{start_date}_to_{end_date}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
+
 
 
 
