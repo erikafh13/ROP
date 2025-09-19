@@ -59,7 +59,8 @@ try:
 
     if credentials:
         drive_service = build('drive', 'v3', credentials=credentials)
-        folder_penjualan = "1wH9o4dyNfjve9ScJ_DB2TwT0EDsPe9Zf"
+        # PASTIKAN ID FOLDER INI SUDAH BENAR dan sudah di-share ke email service account
+        folder_penjualan = "1wH9o4dyNfjveScJ_DB2TwT0EDsPe9Zf" 
         folder_produk = "1UdGbFzZ2Wv83YZLNwdU-rgY-LXlczsFv"
         DRIVE_AVAILABLE = True
 
@@ -132,15 +133,18 @@ def convert_df_to_excel(df):
     processed_data = output.getvalue()
     return processed_data
 
-# --- GANTI SELURUH FUNGSI LAMA ANDA DENGAN YANG INI ---
+# --- FUNGSI UTAMA PERHITUNGAN ROP (VERSI DIPERBAIKI) ---
 @st.cache_data(ttl=3600)
 def preprocess_sales_data(_penjualan_df, _produk_df, start_date, end_date):
     """
-    Fungsi inti yang direvisi total untuk efisiensi memori (vectorization).
-    Mampu menangani rentang tanggal yang jauh lebih panjang.
+    Fungsi inti yang direvisi total untuk menangani error duplikasi dan groupby.
     """
     penjualan_df = _penjualan_df.copy()
     produk_df = _produk_df.copy()
+    
+    # --- LANGKAH PEMBERSIHAN DATA EKSTRA untuk mencegah error ---
+    penjualan_df['No. Barang'] = penjualan_df['No. Barang'].astype(str).str.strip()
+    penjualan_df['Tgl Faktur'] = pd.to_datetime(penjualan_df['Tgl Faktur']).dt.normalize()
 
     analysis_start_date = pd.to_datetime(start_date) - pd.DateOffset(days=90)
     extended_end_date = pd.to_datetime(end_date) + pd.DateOffset(days=21)
@@ -149,6 +153,10 @@ def preprocess_sales_data(_penjualan_df, _produk_df, start_date, end_date):
     daily_sales = penjualan_df.groupby(['Tgl Faktur', 'City', 'No. Barang'])['Kuantitas'].sum().reset_index()
     daily_sales.rename(columns={'Tgl Faktur': 'Date', 'Kuantitas': 'SO'}, inplace=True)
     daily_sales['Date'] = pd.to_datetime(daily_sales['Date'])
+    
+    # Memastikan kolom kunci bersih sebelum join
+    daily_sales['No. Barang'] = daily_sales['No. Barang'].astype(str).str.strip()
+    daily_sales['City'] = daily_sales['City'].astype(str).str.strip()
 
     unique_items = daily_sales[['City', 'No. Barang']].drop_duplicates()
     if unique_items.empty:
@@ -158,15 +166,15 @@ def preprocess_sales_data(_penjualan_df, _produk_df, start_date, end_date):
     df_full = unique_items.merge(date_df, how='cross')
     df_full = df_full.merge(daily_sales, on=['City', 'No. Barang', 'Date'], how='left').fillna(0)
     
-    # --- PERBAIKAN UTAMA ADA DI BARIS INI ---
-    # Menjumlahkan duplikat (jika ada) dan memastikan setiap baris unik
+    # --- FIX 1: Menghilangkan duplikasi sebelum set index ---
     df_full = df_full.groupby(['City', 'No. Barang', 'Date']).sum().reset_index()
     
     df_full.sort_values(['City', 'No. Barang', 'Date'], inplace=True)
     
     df_full.set_index(['City', 'No. Barang', 'Date'], inplace=True)
     
-    grouped = df_full.groupby(level=['City', 'No. Barang'])['SO']
+    # --- FIX 2: Menggunakan nomor level (0, 1) untuk groupby yang lebih stabil ---
+    grouped = df_full.groupby(level=[0, 1])['SO']
 
     sales_90d = grouped.rolling(window=90, min_periods=1).sum()
     std_dev_90d = grouped.rolling(window=90, min_periods=1).std().fillna(0)
@@ -177,7 +185,7 @@ def preprocess_sales_data(_penjualan_df, _produk_df, start_date, end_date):
     df_full['ADS'] = df_full['sales_90d'] / 90
 
     forward_sum_calculator = lambda x: x.iloc[::-1].rolling(window=21, min_periods=0).sum().iloc[::-1].shift(-21)
-    df_full['Penjualan_Aktual_21_Hari'] = df_full.groupby(level=['City', 'No. Barang'])['SO'].transform(forward_sum_calculator)
+    df_full['Penjualan_Aktual_21_Hari'] = df_full.groupby(level=[0, 1])['SO'].transform(forward_sum_calculator)
 
     df_full.reset_index(inplace=True)
 
@@ -579,4 +587,3 @@ elif page == "Analisis Error Metode ROP":
                 file_name=f"analisis_error_rop_{start_date}_to_{end_date}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
-
