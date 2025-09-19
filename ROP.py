@@ -60,7 +60,7 @@ try:
 
     if credentials:
         drive_service = build('drive', 'v3', credentials=credentials)
-        folder_penjualan = "1wH9o4dyNfjve9ScJ_DB2TwT0EDsPe9Zf"
+        folder_penjualan = "1wH9o4dyNfjveScJ_DB2TwT0EDsPe9Zf"
         folder_produk = "1UdGbFzZ2Wv83YZLNwdU-rgY-LXlczsFv"
         DRIVE_AVAILABLE = True
 
@@ -177,8 +177,9 @@ def preprocess_sales_data(_penjualan_df, _produk_df, start_date, end_date):
         sorted_ads['Cumulative_Perc'] = 100 * sorted_ads['CUM_ADS'] / city_totals.where(city_totals != 0, 1)
         sorted_ads['Kategori ABC'] = pd.cut(sorted_ads['Cumulative_Perc'], bins=[-1, 70, 90, 101], labels=['A', 'B', 'C'], right=True)
         
-        # FIX: Tambahkan 'D' sebagai kategori yang valid sebelum digunakan
-        sorted_ads['Kategori ABC'] = sorted_ads['Kategori ABC'].cat.add_categories('D')
+        # FIX: Hanya tambahkan kategori 'D' jika belum ada untuk menghindari ValueError
+        if 'D' not in sorted_ads['Kategori ABC'].cat.categories:
+            sorted_ads['Kategori ABC'] = sorted_ads['Kategori ABC'].cat.add_categories('D')
         
         sorted_ads.loc[city_totals == 0, 'Kategori ABC'] = 'D'
         abc_classification = sorted_ads[['City', 'No. Barang', 'Kategori ABC']]
@@ -200,10 +201,10 @@ def apply_rop_method(df, method):
         z_scores = {'A': 1.0, 'B': 1.0, 'C': 1.0, 'D': 1.0}
     else: # ROP = Min Stock
         z_scores = {'A': 0.0, 'B': 0.0, 'C': 0.0, 'D': 0.0}
-    if isinstance(df_copy['Kategori ABC'].dtype, pd.CategoricalDtype):
-        df_copy['Kategori ABC'] = df_copy['Kategori ABC'].cat.add_categories('D').fillna('D')
-    else:
-        df_copy['Kategori ABC'] = df_copy['Kategori ABC'].fillna('D')
+    
+    # Mengubah Kategori ABC menjadi tipe data string biasa untuk menghindari error
+    df_copy['Kategori ABC'] = df_copy['Kategori ABC'].astype(str).fillna('D')
+
     df_copy['Z_Score'] = df_copy['Kategori ABC'].map(z_scores)
     df_copy['Prediksi_Stok_Minimal'] = df_copy['ADS'] * LEAD_TIME_DAYS
     lead_time_ratio_std = LEAD_TIME_DAYS / FORECAST_PERIOD_DAYS
@@ -538,4 +539,38 @@ elif page == "Analisis Error Metode ROP":
                 else:
                     st.write("Tidak ada data untuk kota ini.")
 
+        # --- BAGIAN BARU: Analisis per Brand ---
+        st.markdown("---")
+        st.header("🏭 Hasil Perbandingan per Brand")
+        
+        # Pastikan kolom brand ada dan tangani nilai yang hilang
+        if 'BRAND Barang' in result_df.columns:
+            unique_brands = sorted(result_df['BRAND Barang'].dropna().unique())
+            for brand in unique_brands:
+                with st.expander(f"Lihat Hasil untuk Brand: {brand}"):
+                    brand_df = result_df[result_df['BRAND Barang'] == brand]
+                    
+                    summary_list_brand = []
+                    if not brand_df.empty:
+                        for method in ['ABC', 'Uniform', 'Min_Stock']:
+                            error_col = f'Error_{method}'
+                            mae = brand_df[error_col].abs().mean()
+                            bias = brand_df[error_col].mean()
+                            stockout_days = (brand_df[error_col] < 0).sum()
+                            summary_list_brand.append({
+                                'Metode': method.replace('_', ' '),
+                                'MAE': mae,
+                                'Rata-rata Error (Bias)': bias,
+                                'Jumlah Hari Stockout': stockout_days
+                            })
+                        
+                        summary_df_brand = pd.DataFrame(summary_list_brand).set_index('Metode')
+                        
+                        st.dataframe(summary_df_brand.style
+                            .highlight_min(subset=['MAE', 'Jumlah Hari Stockout'], color='lightgreen')
+                            .apply(lambda x: ['background-color: lightcoral' if v < 0 else 'background-color: lightblue' for v in x], subset=['Rata-rata Error (Bias)'])
+                            .format("{:.2f}", subset=['MAE', 'Rata-rata Error (Bias)'])
+                        )
+                    else:
+                        st.write("Tidak ada data untuk brand ini.")
 
