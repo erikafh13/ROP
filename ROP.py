@@ -176,6 +176,10 @@ def preprocess_sales_data(_penjualan_df, _produk_df, start_date, end_date):
         sorted_ads['CUM_ADS'] = sorted_ads.groupby('City')['ADS'].cumsum()
         sorted_ads['Cumulative_Perc'] = 100 * sorted_ads['CUM_ADS'] / city_totals.where(city_totals != 0, 1)
         sorted_ads['Kategori ABC'] = pd.cut(sorted_ads['Cumulative_Perc'], bins=[-1, 70, 90, 101], labels=['A', 'B', 'C'], right=True)
+        
+        # FIX: Tambahkan 'D' sebagai kategori yang valid sebelum digunakan
+        sorted_ads['Kategori ABC'] = sorted_ads['Kategori ABC'].cat.add_categories('D')
+        
         sorted_ads.loc[city_totals == 0, 'Kategori ABC'] = 'D'
         abc_classification = sorted_ads[['City', 'No. Barang', 'Kategori ABC']]
 
@@ -533,4 +537,5 @@ elif page == "Analisis Error Metode ROP":
                     )
                 else:
                     st.write("Tidak ada data untuk kota ini.")
+
 
