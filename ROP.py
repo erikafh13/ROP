@@ -574,3 +574,45 @@ elif page == "Analisis Error Metode ROP":
                     else:
                         st.write("Tidak ada data untuk brand ini.")
 
+        # --- BAGIAN BARU: Kesimpulan Otomatis ---
+        st.markdown("---")
+        st.header("💡 Kesimpulan & Rekomendasi")
+
+        # Cari metode terbaik secara dinamis
+        metode_terakurat = summary_df['MAE'].idxmin()
+        mae_terendah = summary_df['MAE'].min()
+        metode_paling_aman = summary_df['Jumlah Hari Stockout'].idxmin()
+        stockout_terendah = summary_df['Jumlah Hari Stockout'].min()
+
+        # Analisa Bias
+        semua_bias_negatif = (summary_df['Rata-rata Error (Bias)'] < 0).all()
+
+        kesimpulan_text = f"""
+        Berdasarkan hasil analisa pada rentang tanggal yang dipilih:
+
+        1.  **Metode Paling Akurat (MAE Terendah):**
+            * Metode **{metode_terakurat}** terbukti paling akurat dengan nilai **MAE {mae_terendah:.2f}**. Ini berarti, secara rata-rata, prediksi dari metode ini memiliki selisih paling kecil dari penjualan riil.
+
+        2.  **Metode Paling Aman dari Stockout:**
+            * Metode **{metode_paling_aman}** adalah pilihan paling aman untuk menghindari kehabisan stok. Metode ini memiliki **Jumlah Hari Stockout paling rendah ({int(stockout_terendah)} kejadian)**.
+
+        3.  **Kecenderungan Umum (Bias):**
+        """
+
+        if semua_bias_negatif:
+            kesimpulan_text += """
+            * Perlu diperhatikan bahwa **semua metode menunjukkan bias negatif**, yang artinya secara umum cenderung menghasilkan prediksi ROP yang lebih rendah dari permintaan aktual (risiko stockout).
+        """
+        else:
+            kesimpulan_text += """
+            * Metode yang ada menunjukkan kecenderungan bervariasi. Metode dengan bias negatif cenderung berisiko stockout, sementara yang positif cenderung menyebabkan overstock.
+        """
+
+        kesimpulan_text += f"""
+        ### **Rekomendasi:**
+        * **Jika prioritas Anda adalah akurasi dan efisiensi biaya (meminimalkan stok):** Gunakan **Metode {metode_terakurat}**. Namun, tetap waspada terhadap risikonya yang lebih tinggi untuk terjadi stockout.
+        * **Jika prioritas Anda adalah ketersediaan barang dan kepuasan pelanggan (meminimalkan stockout):** Gunakan **Metode {metode_paling_aman}**. Metode ini memberikan jaring pengaman terbaik terhadap lonjakan permintaan yang tak terduga.
+        """
+
+        st.markdown(kesimpulan_text)
+
